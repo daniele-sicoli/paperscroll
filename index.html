@@ -92,13 +92,13 @@
       <input id="newTopic" placeholder='e.g. thermosphere density, "SINDy", space weather'>
       <button class="primary" id="addTopic">Add</button>
     </div>
-    <div class="hint">Each topic becomes one arXiv query. Tips: put multi-word phrases in quotes; use AND / OR / ANDNOT between terms; prefix with <code>cat:</code> for a category (e.g. <code>cat:physics.space-ph</code>, <code>cat:astro-ph.EP</code>) or <code>au:</code> for an author.</div>
+    <div class="hint">Each topic is one search on OpenAlex (covers arXiv preprints and journals). Tips: put multi-word phrases in quotes, e.g. <code>"thermospheric density" AND machine learning</code>; use AND / OR / NOT between terms.</div>
     <div class="topiclist" id="topicList"></div>
 
     <label>Sort</label>
     <div class="seg" id="sortSeg">
       <button data-v="submittedDate" class="on">Newest</button>
-      <button data-v="lastUpdatedDate">Recently updated</button>
+      <button data-v="lastUpdatedDate">Most cited</button>
       <button data-v="relevance">Relevance</button>
     </div>
 
@@ -147,66 +147,59 @@
   const toast=(m)=>{const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1800)};
   const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const fmtDate=d=>{const x=new Date(d);return isNaN(x)?'':x.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})};
-  const idOf=u=>u.replace(/^https?:\/\/arxiv\.org\/abs\//,'').replace(/v\d+$/,'');
-
-  function buildQuery(topic){
-    // If the user already used arXiv syntax (cat:, au:, ti:, AND/OR), pass through.
-    if(/\b(cat|au|ti|abs|all):/.test(topic)) return topic;
-    const f=state.field;
-    // split on AND/OR/ANDNOT preserving quoted phrases
-    const tokens=topic.match(/"[^"]+"|\S+/g)||[];
-    const parts=[]; let prevTerm=false;
-    for(const t of tokens){
-      const up=t.toUpperCase();
-      const isOp=up==='AND'||up==='OR'||up==='ANDNOT'||t==='('||t===')';
-      if(isOp){ parts.push(up==='ANDNOT'?'ANDNOT':(t==='('||t===')')?t:up); prevTerm=(t===')'); continue; }
-      if(prevTerm) parts.push('AND');
-      parts.push(f+':'+t); prevTerm=true;
-    }
-    return parts.join(' ');
-  }
-
-  // arXiv allows ~1 request / 3 s: serialize everything through one queue with retries.
-  let lastReq=0, chain=Promise.resolve();
+  
+  // ---------- OpenAlex ----------
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-  function throttled(fn){ const p=chain.then(async()=>{ const wait=3100-(Date.now()-lastReq); if(wait>0) await sleep(wait); try{ return await fn(); } finally{ lastReq=Date.now(); } }); chain=p.catch(()=>{}); return p; }
-  async function arxivGet(url){
+  async function getJSON(url){
     let err;
     for(let i=0;i<3;i++){
       try{
         const res=await fetch(url,{cache:'no-store'});
-        if(res.status===429||res.status===503){ err=new Error('arXiv busy'); await sleep(3000*(i+1)); continue; }
-        if(!res.ok) throw new Error('arXiv '+res.status);
-        const txt=await res.text();
-        const xml=new DOMParser().parseFromString(txt,'text/xml');
-        if(xml.getElementsByTagName('parsererror').length) throw new Error('bad XML');
-        return xml;
-      }catch(e){ err=e; await sleep(2000*(i+1)); }
+        if(res.status===429||res.status>=500){ err=new Error('busy '+res.status); await sleep(1500*(i+1)); continue; }
+        if(!res.ok) throw new Error('OpenAlex '+res.status);
+        return await res.json();
+      }catch(e){ err=e; await sleep(1000*(i+1)); }
     }
     throw err;
   }
+  function deinvert(inv){
+    if(!inv) return '';
+    const words=[];
+    for(const [w,pos] of Object.entries(inv)) for(const i of pos) words[i]=w;
+    return words.join(' ').replace(/\s+/g,' ').trim();
+  }
+  const SORTS={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'};
+  const PER=25;
 
   async function fetchTopic(topic){
     if(exhausted[topic]) return [];
-    const start=cursors[topic]||0;
-    const q=encodeURIComponent(buildQuery(topic));
-    const url=`https://export.arxiv.org/api/query?search_query=${q}&start=${start}&max_results=${PAGE}&sortBy=${state.sort}&sortOrder=descending`;
-    const xml=await throttled(()=>arxivGet(url));
-    const entries=[...xml.getElementsByTagName('entry')];
-    cursors[topic]=start+PAGE;
-    if(entries.length<PAGE) exhausted[topic]=true;
-    return entries.map(e=>{
-      const g=n=>(e.getElementsByTagName(n)[0]||{}).textContent||'';
-      const links=[...e.getElementsByTagName('link')];
-      const pdf=(links.find(l=>l.getAttribute('title')==='pdf')||{}).getAttribute?.('href')||'';
-      const cats=[...e.getElementsByTagName('category')].map(c=>c.getAttribute('term'));
+    const page=(cursors[topic]||0)+1;
+    const q=encodeURIComponent(topic);
+    const filters=['has_abstract:true'];
+    let search='';
+    if(state.field==='ti') filters.push('title.search:'+q);
+    else if(state.field==='abs') filters.push('abstract.search:'+q);
+    else search='&search='+q;
+    const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,primary_topic,cited_by_count,type';
+    const url=`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${SORTS[state.sort]||SORTS.submittedDate}&per-page=${PER}&page=${page}&select=${sel}`;
+    const data=await getJSON(url);
+    const results=data.results||[];
+    cursors[topic]=page;
+    if(results.length<PER || page>=40) exhausted[topic]=true;
+    return results.map(w=>{
+      const loc=w.primary_location||{};
+      const landing=loc.landing_page_url||w.doi||w.id;
+      const arx=/arxiv\.org\/abs\//.test(landing||'');
       return {
-        id:idOf(g('id')), url:g('id'), pdf,
-        title:g('title').replace(/\s+/g,' ').trim(),
-        summary:g('summary').replace(/\s+/g,' ').trim(),
-        authors:[...e.getElementsByTagName('author')].map(a=>a.getElementsByTagName('name')[0]?.textContent||''),
-        published:g('published'), updated:g('updated'),
-        cat:cats[0]||'', topic
+        id:w.id.replace('https://openalex.org/',''),
+        url:landing, pdf:w.open_access?.oa_url||loc.pdf_url||'',
+        title:(w.display_name||w.title||'Untitled').trim(),
+        summary:deinvert(w.abstract_inverted_index),
+        authors:(w.authorships||[]).map(a=>a.author?.display_name||'').filter(Boolean),
+        published:w.publication_date||'', updated:'',
+        cat:arx?'arXiv':(loc.source?.display_name||w.type||''),
+        cites:w.cited_by_count||0,
+        topic
       };
     });
   }
@@ -214,7 +207,7 @@
   function activeTopics(){ return mode==='saved'?[]:(state.mix==='one'&&state.active?[state.active]:(state.active?[state.active,...state.topics.filter(t=>t!==state.active)]:state.topics)); }
   const shown=new Set(); let failures={};
 
-  // Fetch topics one by one (arXiv is rate-limited) and hand papers to onItems as each arrives.
+  // Fetch topics one by one and hand papers to onItems as each arrives.
   async function nextBatch(onItems){
     const topics=activeTopics();
     if(!topics.length) return 0;
@@ -222,9 +215,9 @@
     for(const t of topics){
       buffers[t]=buffers[t]||[];
       if(buffers[t].length<5 && !exhausted[t]){
-        showLoader(`Asking arXiv about “${t}”…`);
+        showLoader(`Searching “${t}”…`);
         try{ const got=await fetchTopic(t); failures[t]=0; buffers[t].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id))); }
-        catch(e){ console.warn(e); failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('arXiv not responding for "'+t+'" — tap ↻ to retry'); } }
+        catch(e){ console.warn(e); failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('Search failed for "'+t+'" — tap ↻ to retry'); } }
       }
       // interleave a few from each topic as soon as it's available
       const out=[]; let n=0;
@@ -240,13 +233,13 @@
     const isSaved=!!state.saved[p.id];
     const auth=p.authors.length>6?p.authors.slice(0,6).join(', ')+' … (+'+(p.authors.length-6)+')':p.authors.join(', ');
     el.innerHTML=`
-      <div class="meta">${p.cat?`<span class="tag">${esc(p.cat)}</span>`:''}<span>${fmtDate(p.published)}</span>${p.updated&&p.updated.slice(0,10)!==p.published.slice(0,10)?`<span>· upd ${fmtDate(p.updated)}</span>`:''}<span class="kw">· ${esc(p.topic||'saved')}</span></div>
+      <div class="meta">${p.cat?`<span class="tag">${esc(p.cat)}</span>`:''}<span>${fmtDate(p.published)}</span>${p.cites?`<span>· ${p.cites} cites</span>`:''}<span class="kw">· ${esc(p.topic||'saved')}</span></div>
       <h2 class="ttl">${esc(p.title)}</h2>
       <div class="auth">${esc(auth)}</div>
-      <div class="abs clamp">${esc(p.summary)}</div>
+      <div class="abs clamp">${esc(p.summary||'(no abstract available)')}</div>
       <button class="more">Read more</button>
       <div class="actions">
-        <a href="${esc(p.url)}" target="_blank" rel="noopener">arXiv</a>
+        <a href="${esc(p.url)}" target="_blank" rel="noopener">Open</a>
         ${p.pdf?`<a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a>`:''}
         <button class="save ${isSaved?'saved':''}">${isSaved?'Saved ✓':'Save'}</button>
         <button class="share">Copy</button>
@@ -282,7 +275,7 @@
             ?`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`
             :(allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:`<div class="empty">Couldn't load papers right now.<br>Tap <b>↻</b> to try again.</div>`);
         } else if(mode!=='saved' && allDone && !feed.querySelector('.end')){
-          const d=document.createElement('div');d.className='empty end';d.innerHTML='You reached the end of arXiv for these topics.<br>Add more topics or reset "seen".';feed.appendChild(d);
+          const d=document.createElement('div');d.className='empty end';d.innerHTML='You reached the end of the results for these topics.<br>Add more topics or reset "seen".';feed.appendChild(d);
         }
       }
     } finally { loading=false; }
