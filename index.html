@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0f17">
+<title>PaperScroll</title>
+<style>
+  :root{
+    --bg:#0b0f17; --card:#121826; --card2:#1a2234; --text:#e8ecf3; --muted:#8a94a8;
+    --accent:#7aa2ff; --accent2:#ffb86b; --ok:#5ad38a; --danger:#ff6b6b;
+    --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;overscroll-behavior:none}
+  body{display:flex;flex-direction:column}
+  header{position:sticky;top:0;z-index:10;background:rgba(11,15,23,.92);backdrop-filter:blur(10px);padding:calc(var(--sat) + 10px) 14px 10px;border-bottom:1px solid #1e2738}
+  .row{display:flex;gap:8px;align-items:center}
+  h1{font-size:17px;margin:0;letter-spacing:.3px;flex:1}
+  h1 span{color:var(--accent)}
+  button{font:inherit;border:0;border-radius:12px;padding:9px 13px;background:var(--card2);color:var(--text);cursor:pointer}
+  button.primary{background:var(--accent);color:#06101f;font-weight:600}
+  button.icon{padding:8px 10px;font-size:16px;line-height:1}
+  button:disabled{opacity:.5}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;padding:6px 11px;border-radius:999px;background:var(--card2);font-size:13px;color:var(--muted);border:1px solid transparent;white-space:nowrap}
+  .chip.on{color:var(--text);border-color:var(--accent);background:#1b2a4a}
+  .chip .x{margin-left:6px;opacity:.6}
+
+  /* feed */
+  #feed{flex:1;overflow-y:auto;scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  #feed::-webkit-scrollbar{display:none}
+  .card{scroll-snap-align:start;scroll-snap-stop:always;min-height:calc(100dvh - 118px - var(--sat));padding:18px 16px calc(18px + var(--sab));display:flex;flex-direction:column;gap:10px;border-bottom:1px solid #1c2537;position:relative}
+  .meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);flex-wrap:wrap}
+  .tag{background:var(--card2);padding:3px 8px;border-radius:7px;color:var(--accent2);font-weight:600}
+  .ttl{font-size:21px;line-height:1.25;font-weight:700;margin:2px 0 0}
+  .auth{font-size:13px;color:var(--muted);line-height:1.4}
+  .abs{font-size:15.5px;line-height:1.55;color:#cdd5e3;flex:1;overflow:hidden;position:relative}
+  .abs.clamp{display:-webkit-box;-webkit-line-clamp:12;-webkit-box-orient:vertical}
+  .more{align-self:flex-start;background:none;color:var(--accent);padding:4px 0;font-size:14px}
+  .actions{display:flex;gap:8px;margin-top:4px}
+  .actions a,.actions button{flex:1;text-align:center;text-decoration:none;color:var(--text);background:var(--card2);border-radius:12px;padding:11px 8px;font-size:14px;font-weight:600}
+  .actions .saved{background:#1f3a2a;color:var(--ok)}
+  .kw{font-size:12px;color:var(--muted)}
+  .empty{padding:60px 24px;text-align:center;color:var(--muted);line-height:1.6}
+  .empty b{color:var(--text)}
+  .loader{padding:28px;text-align:center;color:var(--muted);font-size:14px}
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid #334;border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;vertical-align:-3px;margin-right:8px}
+  @keyframes s{to{transform:rotate(360deg)}}
+
+  /* sheet */
+  .sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:20;align-items:flex-end}
+  .sheet.open{display:flex}
+  .panel{background:var(--card);width:100%;border-radius:18px 18px 0 0;padding:16px 16px calc(20px + var(--sab));max-height:85dvh;overflow:auto}
+  .panel h2{margin:0 0 10px;font-size:16px}
+  .panel label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px}
+  input,select,textarea{width:100%;font:inherit;font-size:16px;background:var(--bg);color:var(--text);border:1px solid #2a3449;border-radius:12px;padding:11px 12px;outline:none}
+  input:focus,textarea:focus{border-color:var(--accent)}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.45}
+  .topiclist{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .topiclist div{display:flex;align-items:center;gap:8px;background:var(--bg);border-radius:10px;padding:8px 10px;font-size:14px}
+  .topiclist div span{flex:1;word-break:break-word}
+  .topiclist div b{color:var(--danger);cursor:pointer;padding:0 4px}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg button{font-size:13px;padding:8px 11px}
+  .seg button.on{background:var(--accent);color:#06101f}
+  .toast{position:fixed;left:50%;bottom:calc(24px + var(--sab));transform:translateX(-50%);background:#263246;color:var(--text);padding:10px 14px;border-radius:12px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30;pointer-events:none;max-width:90vw;text-align:center}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>Paper<span>Scroll</span></h1>
+    <button class="icon" id="btnSaved" title="Saved">🔖</button>
+    <button class="icon" id="btnRefresh" title="Refresh">↻</button>
+    <button class="primary" id="btnTopics">Topics</button>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+
+<div id="feed"></div>
+
+<div class="sheet" id="sheet">
+  <div class="panel">
+    <h2>Your topics</h2>
+    <label>Add a topic or keyword set</label>
+    <div class="row">
+      <input id="newTopic" placeholder='e.g. thermosphere density, "SINDy", space weather'>
+      <button class="primary" id="addTopic">Add</button>
+    </div>
+    <div class="hint">Each topic becomes one arXiv query. Tips: put multi-word phrases in quotes; use AND / OR / ANDNOT between terms; prefix with <code>cat:</code> for a category (e.g. <code>cat:physics.space-ph</code>, <code>cat:astro-ph.EP</code>) or <code>au:</code> for an author.</div>
+    <div class="topiclist" id="topicList"></div>
+
+    <label>Sort</label>
+    <div class="seg" id="sortSeg">
+      <button data-v="submittedDate" class="on">Newest</button>
+      <button data-v="lastUpdatedDate">Recently updated</button>
+      <button data-v="relevance">Relevance</button>
+    </div>
+
+    <label>Search in</label>
+    <div class="seg" id="fieldSeg">
+      <button data-v="all" class="on">All fields</button>
+      <button data-v="ti">Title only</button>
+      <button data-v="abs">Abstract only</button>
+    </div>
+
+    <label>Feed</label>
+    <div class="seg" id="mixSeg">
+      <button data-v="mix" class="on">Shuffle topics together</button>
+      <button data-v="one">One topic at a time</button>
+    </div>
+
+    <div class="row" style="margin-top:18px">
+      <button id="clearSeen" style="flex:1">Reset "seen" history</button>
+      <button class="primary" id="closeSheet" style="flex:1">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const feed=$('#feed'), chipsEl=$('#chips');
+  const LS=k=>{try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}};
+  const SS=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+
+  // ---------- state ----------
+  let state=Object.assign({
+    topics:[], active:null, sort:'submittedDate', field:'all', mix:'mix',
+    saved:{}, seen:{}
+  }, LS('ps_state')||{});
+  if(!state.topics.length){ state.topics=['thermosphere density', 'space weather', 'orbit determination']; }
+  const save=()=>SS('ps_state',state);
+
+  // per-topic paging & buffers
+  let cursors={}, buffers={}, exhausted={}, loading=false, mode='feed'; // 'feed' | 'saved'
+  const PAGE=25;
+
+  // ---------- helpers ----------
+  const toast=(m)=>{const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1800)};
+  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const fmtDate=d=>{const x=new Date(d);return isNaN(x)?'':x.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})};
+  const idOf=u=>u.replace(/^https?:\/\/arxiv\.org\/abs\//,'').replace(/v\d+$/,'');
+
+  function buildQuery(topic){
+    // If the user already used arXiv syntax (cat:, au:, ti:, AND/OR), pass through.
+    if(/\b(cat|au|ti|abs|all):/.test(topic)) return topic;
+    const f=state.field;
+    // split on AND/OR/ANDNOT preserving quoted phrases
+    const tokens=topic.match(/"[^"]+"|\S+/g)||[];
+    return tokens.map(t=>{
+      const up=t.toUpperCase();
+      if(up==='AND'||up==='OR'||up==='ANDNOT'||t==='('||t===')') return up==='ANDNOT'?'ANDNOT':(t==='('||t===')')?t:up;
+      return f+':'+t;
+    }).join(' ');
+  }
+
+  async function fetchTopic(topic){
+    if(exhausted[topic]) return [];
+    const start=cursors[topic]||0;
+    const q=encodeURIComponent(buildQuery(topic));
+    const url=`https://export.arxiv.org/api/query?search_query=${q}&start=${start}&max_results=${PAGE}&sortBy=${state.sort}&sortOrder=descending`;
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('arXiv '+res.status);
+    const xml=new DOMParser().parseFromString(await res.text(),'text/xml');
+    const entries=[...xml.getElementsByTagName('entry')];
+    cursors[topic]=start+PAGE;
+    if(entries.length<PAGE) exhausted[topic]=true;
+    return entries.map(e=>{
+      const g=n=>(e.getElementsByTagName(n)[0]||{}).textContent||'';
+      const links=[...e.getElementsByTagName('link')];
+      const pdf=(links.find(l=>l.getAttribute('title')==='pdf')||{}).getAttribute?.('href')||'';
+      const cats=[...e.getElementsByTagName('category')].map(c=>c.getAttribute('term'));
+      return {
+        id:idOf(g('id')), url:g('id'), pdf,
+        title:g('title').replace(/\s+/g,' ').trim(),
+        summary:g('summary').replace(/\s+/g,' ').trim(),
+        authors:[...e.getElementsByTagName('author')].map(a=>a.getElementsByTagName('name')[0]?.textContent||''),
+        published:g('published'), updated:g('updated'),
+        cat:cats[0]||'', topic
+      };
+    });
+  }
+
+  async function nextBatch(){
+    const topics=mode==='saved'?[]:(state.mix==='one'&&state.active?[state.active]:state.topics);
+    if(!topics.length) return [];
+    // fill buffers
+    await Promise.all(topics.map(async t=>{
+      buffers[t]=buffers[t]||[];
+      if(buffers[t].length<5 && !exhausted[t]){
+        try{ const got=await fetchTopic(t); buffers[t].push(...got.filter(p=>!state.seen[p.id])); }
+        catch(e){ console.warn(e); exhausted[t]=true; toast('Could not reach arXiv for "'+t+'"'); }
+      }
+    }));
+    // interleave
+    const out=[]; let any=true; const seenNow=new Set();
+    while(out.length<12 && any){
+      any=false;
+      for(const t of topics){
+        const p=buffers[t]?.shift();
+        if(p){ any=true; if(!seenNow.has(p.id)){ seenNow.add(p.id); out.push(p);} }
+      }
+    }
+    return out;
+  }
+
+  // ---------- render ----------
+  function card(p){
+    const el=document.createElement('article'); el.className='card'; el.dataset.id=p.id;
+    const isSaved=!!state.saved[p.id];
+    const auth=p.authors.length>6?p.authors.slice(0,6).join(', ')+' … (+'+(p.authors.length-6)+')':p.authors.join(', ');
+    el.innerHTML=`
+      <div class="meta">${p.cat?`<span class="tag">${esc(p.cat)}</span>`:''}<span>${fmtDate(p.published)}</span>${p.updated&&p.updated.slice(0,10)!==p.published.slice(0,10)?`<span>· upd ${fmtDate(p.updated)}</span>`:''}<span class="kw">· ${esc(p.topic||'saved')}</span></div>
+      <h2 class="ttl">${esc(p.title)}</h2>
+      <div class="auth">${esc(auth)}</div>
+      <div class="abs clamp">${esc(p.summary)}</div>
+      <button class="more">Read more</button>
+      <div class="actions">
+        <a href="${esc(p.url)}" target="_blank" rel="noopener">arXiv</a>
+        ${p.pdf?`<a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a>`:''}
+        <button class="save ${isSaved?'saved':''}">${isSaved?'Saved ✓':'Save'}</button>
+        <button class="share">Copy</button>
+      </div>`;
+    const abs=el.querySelector('.abs'), more=el.querySelector('.more');
+    more.onclick=()=>{const c=abs.classList.toggle('clamp');more.textContent=c?'Read more':'Show less'};
+    el.querySelector('.save').onclick=ev=>{
+      if(state.saved[p.id]){delete state.saved[p.id];ev.target.className='save';ev.target.textContent='Save';toast('Removed');}
+      else{state.saved[p.id]=p;ev.target.className='save saved';ev.target.textContent='Saved ✓';toast('Saved');}
+      save();
+    };
+    el.querySelector('.share').onclick=()=>{
+      const txt=p.title+'\n'+p.url;
+      (navigator.clipboard?.writeText(txt)||Promise.reject()).then(()=>toast('Copied title + link')).catch(()=>toast(p.url));
+    };
+    return el;
+  }
+
+  let loaderEl=null;
+  function showLoader(msg){ if(!loaderEl){loaderEl=document.createElement('div');loaderEl.className='loader';} loaderEl.innerHTML=`<span class="spin"></span>${msg||'Loading papers…'}`; feed.appendChild(loaderEl); }
+  function hideLoader(){ loaderEl?.remove(); }
+
+  async function loadMore(){
+    if(loading) return; loading=true; showLoader();
+    try{
+      let items;
+      if(mode==='saved'){ items=[]; }
+      else items=await nextBatch();
+      hideLoader();
+      if(!items.length){
+        if(!feed.querySelector('.card')){
+          feed.innerHTML=mode==='saved'
+            ?`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`
+            :`<div class="empty">Nothing found${state.topics.length?' for these topics':''}.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`;
+        } else if(mode!=='saved'){
+          const d=document.createElement('div');d.className='empty';d.innerHTML='You reached the end of arXiv for these topics.<br>Impressive. Add more topics or reset "seen".';feed.appendChild(d);
+        }
+      } else items.forEach(p=>feed.appendChild(card(p)));
+    } finally { loading=false; }
+  }
+
+  function resetFeed(){
+    cursors={};buffers={};exhausted={};feed.innerHTML='';
+    if(mode==='saved'){
+      const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
+      if(!list.length) feed.innerHTML=`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`;
+      list.forEach(p=>feed.appendChild(card(p)));
+    } else loadMore();
+  }
+
+  // infinite scroll + mark seen
+  feed.addEventListener('scroll',()=>{
+    if(mode!=='saved' && feed.scrollTop+feed.clientHeight>feed.scrollHeight-feed.clientHeight*1.5) loadMore();
+  },{passive:true});
+  const io=new IntersectionObserver(es=>es.forEach(e=>{
+    if(e.isIntersecting && e.intersectionRatio>.6){ const id=e.target.dataset.id; if(id&&!state.seen[id]){state.seen[id]=1; if(Object.keys(state.seen).length>3000){state.seen={};} save();} }
+  }),{root:feed,threshold:[.6]});
+  new MutationObserver(ms=>ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.classList?.contains('card')) io.observe(n)}))).observe(feed,{childList:true});
+
+  // ---------- chips ----------
+  function renderChips(){
+    chipsEl.innerHTML='';
+    const all=document.createElement('span');all.className='chip'+(mode==='feed'&&!state.active?' on':'');all.textContent='All';
+    all.onclick=()=>{mode='feed';state.active=null;save();renderChips();resetFeed();};
+    chipsEl.appendChild(all);
+    state.topics.forEach(t=>{
+      const c=document.createElement('span');c.className='chip'+(mode==='feed'&&state.active===t?' on':'');c.textContent=t;
+      c.onclick=()=>{mode='feed';state.active=(state.active===t?null:t);save();renderChips();resetFeed();};
+      chipsEl.appendChild(c);
+    });
+    const sv=document.createElement('span');sv.className='chip'+(mode==='saved'?' on':'');sv.textContent='🔖 Saved ('+Object.keys(state.saved).length+')';
+    sv.onclick=()=>{mode='saved';renderChips();resetFeed();};
+    chipsEl.appendChild(sv);
+  }
+
+  // ---------- sheet ----------
+  const sheet=$('#sheet');
+  function renderTopicList(){
+    const l=$('#topicList');l.innerHTML='';
+    state.topics.forEach((t,i)=>{
+      const d=document.createElement('div');d.innerHTML=`<span>${esc(t)}</span><b title="Remove">✕</b>`;
+      d.querySelector('b').onclick=()=>{state.topics.splice(i,1);if(state.active===t)state.active=null;save();renderTopicList();};
+      l.appendChild(d);
+    });
+  }
+  function seg(id,key){
+    const s=$(id);
+    [...s.children].forEach(b=>{b.classList.toggle('on',b.dataset.v===state[key]);b.onclick=()=>{state[key]=b.dataset.v;save();seg(id,key);};});
+  }
+  function addTopic(){
+    const v=$('#newTopic').value.trim();
+    if(!v) return;
+    if(!state.topics.includes(v)) state.topics.push(v);
+    $('#newTopic').value='';save();renderTopicList();
+  }
+  $('#addTopic').onclick=addTopic;
+  $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
+  $('#btnTopics').onclick=()=>{renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');seg('#mixSeg','mix');sheet.classList.add('open');};
+  const closeSheet=()=>{sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
+  $('#closeSheet').onclick=closeSheet;
+  sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
+  $('#clearSeen').onclick=()=>{state.seen={};save();toast('Seen history cleared');};
+  $('#btnRefresh').onclick=()=>{mode='feed';renderChips();resetFeed();toast('Refreshed');};
+  $('#btnSaved').onclick=()=>{mode=mode==='saved'?'feed':'saved';renderChips();resetFeed();};
+
+  // ---------- boot ----------
+  save();renderChips();resetFeed();
+})();
+</script>
+</body>
+</html>
