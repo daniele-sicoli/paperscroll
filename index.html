@@ -100,7 +100,7 @@
       <input id="newTopic" placeholder='e.g. thermosphere density, "SINDy", space weather'>
       <button class="primary" id="addTopic">Add</button>
     </div>
-    <div class="hint">Each topic is searched on every enabled source below. Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>.</div>
+    <div class="hint">Each topic is searched on every enabled source below. Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>. Follow a journal with <code>journal:Nature</code> or <code>journal:National Science Review</code>, or filter inside one: <code>journal:Nature | space weather</code>.</div>
     <div class="topiclist" id="topicList"></div>
     <div class="lim" id="limLabel"></div>
 
@@ -241,6 +241,8 @@
   // Client-side check: all keyword stems must appear within a short window of each other
   // in the title or abstract, so "density of the thermosphere" passes but scattered matches don't.
   function relevant(p,topic){
+    const pt=parseTopic(topic);
+    if(pt.journal){ if(!pt.kw) return true; topic=pt.kw; }
     if(hasOps(topic)) return true;
     const ks=[...new Set(keywords(topic).map(stem))];
     if(!ks.length) return true;
@@ -263,14 +265,39 @@
   const dedupKey=p=>p.doi?('doi:'+p.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//,'')):('t:'+normTitle(p.title));
   const stripTags=h=>String(h||'').replace(/<[^>]+>/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
 
+  // "journal:Nature" follows a journal; "journal:Nature | space weather" filters within it.
+  function parseTopic(t){
+    const m=/^\s*journal\s*:\s*([^|]+?)\s*(?:\|\s*(.+))?$/i.exec(t);
+    return m?{journal:m[1].trim(),kw:(m[2]||'').trim()}:{journal:null,kw:t};
+  }
+  const jcache={};
+  async function resolveJournal(name){
+    const k=name.toLowerCase();
+    if(jcache[k]) return jcache[k];
+    try{ const c=JSON.parse(localStorage.getItem('oaj:'+k)); if(c) return jcache[k]=c; }catch(e){}
+    const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
+    const d=await getJSON(`https://api.openalex.org/sources?search=${encodeURIComponent(name)}&per-page=1&select=id,display_name,issn_l,issn${extra}`,{quota:true});
+    const r=(d.results||[])[0];
+    if(!r) throw new Error('Journal not found: '+name);
+    const j={id:r.id.replace('https://openalex.org/',''),name:r.display_name,issn:r.issn_l||(r.issn||[])[0]||''};
+    try{localStorage.setItem('oaj:'+k,JSON.stringify(j))}catch(e){}
+    return jcache[k]=j;
+  }
+
   const SOURCES={
     openalex:{ label:'OpenAlex', quota:true,
       async fetch(topic,cur){
         const page=(cur||0)+1;
-        const q=encodeURIComponent(searchTerm(topic));
-        const filters=['has_abstract:true','to_publication_date:'+today(),'type:article|preprint|review'];
-        const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':'title_and_abstract.search';
-        let search=''; if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
+        const pt=parseTopic(topic);
+        const filters=['to_publication_date:'+today(),'type:article|preprint|review'];
+        if(pt.journal){ const j=await resolveJournal(pt.journal); filters.push('primary_location.source.id:'+j.id); }
+        else filters.push('has_abstract:true');
+        let search='';
+        if(pt.kw){
+          const q=encodeURIComponent(searchTerm(pt.kw));
+          const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':'title_and_abstract.search';
+          if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
+        }
         const sort={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'}[state.sort];
         const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,cited_by_count,type';
         const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
@@ -287,8 +314,9 @@
       }},
     s2:{ label:'Semantic Scholar',
       async fetch(topic,cur){
+        const pt=parseTopic(topic); if(pt.journal) return {items:[],next:null};
         const fields='title,abstract,authors,publicationDate,year,externalIds,openAccessPdf,venue,citationCount,url';
-        const q=encodeURIComponent(searchTerm(topic));
+        const q=encodeURIComponent(searchTerm(pt.kw));
         let data, items, next;
         if(state.sort==='relevance'){
           const off=cur||0;
@@ -311,11 +339,15 @@
     crossref:{ label:'Crossref',
       async fetch(topic,cur){
         const off=cur||0;
-        const q=encodeURIComponent(keywords(topic).join(' ')||topic);
+        const pt=parseTopic(topic);
         const sort={submittedDate:'published&order=desc',lastUpdatedDate:'is-referenced-by-count&order=desc',relevance:'relevance&order=desc'}[state.sort];
-        const filter=`has-abstract:true,until-pub-date:${today()},type:journal-article,type:posted-content`;
+        let filter=`until-pub-date:${today()},type:journal-article,type:posted-content`;
+        let query='';
+        if(pt.journal){ const j=await resolveJournal(pt.journal); if(!j.issn) return {items:[],next:null}; filter+=`,issn:${j.issn}`; }
+        else filter+=',has-abstract:true';
+        if(pt.kw) query='&query.bibliographic='+encodeURIComponent(keywords(pt.kw).join(' ')||pt.kw);
         const mailto=cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'';
-        const data=await getJSON(`https://api.crossref.org/works?query.bibliographic=${q}&filter=${filter}&sort=${sort}&rows=${PER}&offset=${off}&select=DOI,title,abstract,author,issued,container-title,is-referenced-by-count,URL,link,subtype${mailto}`);
+        const data=await getJSON(`https://api.crossref.org/works?${query.slice(1)}${query?'&':''}filter=${filter}&sort=${sort}&rows=${PER}&offset=${off}&select=DOI,title,abstract,author,issued,container-title,is-referenced-by-count,URL,link,subtype${mailto}`);
         const results=data.message?.items||[];
         const items=results.map(w=>{
           const dp=(w.issued?.['date-parts']||[[]])[0]||[]; const published=dp.length?`${dp[0]}-${String(dp[1]||1).padStart(2,'0')}-${String(dp[2]||1).padStart(2,'0')}`:'';
@@ -329,7 +361,8 @@
       }},
     epmc:{ label:'Europe PMC',
       async fetch(topic,cur){
-        const term=hasOps(topic)?topic:keywords(topic).join(' AND ');
+        const pt=parseTopic(topic); if(pt.journal) return {items:[],next:null};
+        const term=hasOps(pt.kw)?pt.kw:keywords(pt.kw).join(' AND ');
         const q=encodeURIComponent(`(${term}) AND HAS_ABSTRACT:Y AND (SRC:MED OR SRC:PPR OR SRC:PMC)`);
         const sort={submittedDate:'&sort=P_PDATE_D desc',lastUpdatedDate:'&sort=CITED desc',relevance:''}[state.sort];
         const cm=encodeURIComponent(cur||'*');
@@ -472,7 +505,7 @@
     all.onclick=()=>{mode='feed';state.active=null;save();renderChips();resetFeed();};
     chipsEl.appendChild(all);
     state.topics.forEach(t=>{
-      const c=document.createElement('span');c.className='chip'+(mode==='feed'&&state.active===t?' on':'');c.textContent=t;
+      const c=document.createElement('span');c.className='chip'+(mode==='feed'&&state.active===t?' on':'');const pt=parseTopic(t);c.textContent=pt.journal?('📰 '+pt.journal+(pt.kw?' · '+pt.kw:'')):t;
       c.onclick=()=>{mode='feed';state.active=(state.active===t?null:t);save();renderChips();resetFeed();};
       chipsEl.appendChild(c);
     });
