@@ -155,11 +155,35 @@
     const f=state.field;
     // split on AND/OR/ANDNOT preserving quoted phrases
     const tokens=topic.match(/"[^"]+"|\S+/g)||[];
-    return tokens.map(t=>{
+    const parts=[]; let prevTerm=false;
+    for(const t of tokens){
       const up=t.toUpperCase();
-      if(up==='AND'||up==='OR'||up==='ANDNOT'||t==='('||t===')') return up==='ANDNOT'?'ANDNOT':(t==='('||t===')')?t:up;
-      return f+':'+t;
-    }).join(' ');
+      const isOp=up==='AND'||up==='OR'||up==='ANDNOT'||t==='('||t===')';
+      if(isOp){ parts.push(up==='ANDNOT'?'ANDNOT':(t==='('||t===')')?t:up); prevTerm=(t===')'); continue; }
+      if(prevTerm) parts.push('AND');
+      parts.push(f+':'+t); prevTerm=true;
+    }
+    return parts.join(' ');
+  }
+
+  // arXiv allows ~1 request / 3 s: serialize everything through one queue with retries.
+  let lastReq=0, chain=Promise.resolve();
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  function throttled(fn){ const p=chain.then(async()=>{ const wait=3100-(Date.now()-lastReq); if(wait>0) await sleep(wait); try{ return await fn(); } finally{ lastReq=Date.now(); } }); chain=p.catch(()=>{}); return p; }
+  async function arxivGet(url){
+    let err;
+    for(let i=0;i<3;i++){
+      try{
+        const res=await fetch(url,{cache:'no-store'});
+        if(res.status===429||res.status===503){ err=new Error('arXiv busy'); await sleep(3000*(i+1)); continue; }
+        if(!res.ok) throw new Error('arXiv '+res.status);
+        const txt=await res.text();
+        const xml=new DOMParser().parseFromString(txt,'text/xml');
+        if(xml.getElementsByTagName('parsererror').length) throw new Error('bad XML');
+        return xml;
+      }catch(e){ err=e; await sleep(2000*(i+1)); }
+    }
+    throw err;
   }
 
   async function fetchTopic(topic){
@@ -167,9 +191,7 @@
     const start=cursors[topic]||0;
     const q=encodeURIComponent(buildQuery(topic));
     const url=`https://export.arxiv.org/api/query?search_query=${q}&start=${start}&max_results=${PAGE}&sortBy=${state.sort}&sortOrder=descending`;
-    const res=await fetch(url);
-    if(!res.ok) throw new Error('arXiv '+res.status);
-    const xml=new DOMParser().parseFromString(await res.text(),'text/xml');
+    const xml=await throttled(()=>arxivGet(url));
     const entries=[...xml.getElementsByTagName('entry')];
     cursors[topic]=start+PAGE;
     if(entries.length<PAGE) exhausted[topic]=true;
@@ -189,27 +211,27 @@
     });
   }
 
-  async function nextBatch(){
-    const topics=mode==='saved'?[]:(state.mix==='one'&&state.active?[state.active]:state.topics);
-    if(!topics.length) return [];
-    // fill buffers
-    await Promise.all(topics.map(async t=>{
+  function activeTopics(){ return mode==='saved'?[]:(state.mix==='one'&&state.active?[state.active]:(state.active?[state.active,...state.topics.filter(t=>t!==state.active)]:state.topics)); }
+  const shown=new Set(); let failures={};
+
+  // Fetch topics one by one (arXiv is rate-limited) and hand papers to onItems as each arrives.
+  async function nextBatch(onItems){
+    const topics=activeTopics();
+    if(!topics.length) return 0;
+    let total=0;
+    for(const t of topics){
       buffers[t]=buffers[t]||[];
       if(buffers[t].length<5 && !exhausted[t]){
-        try{ const got=await fetchTopic(t); buffers[t].push(...got.filter(p=>!state.seen[p.id])); }
-        catch(e){ console.warn(e); exhausted[t]=true; toast('Could not reach arXiv for "'+t+'"'); }
+        showLoader(`Asking arXiv about “${t}”…`);
+        try{ const got=await fetchTopic(t); failures[t]=0; buffers[t].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id))); }
+        catch(e){ console.warn(e); failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('arXiv not responding for "'+t+'" — tap ↻ to retry'); } }
       }
-    }));
-    // interleave
-    const out=[]; let any=true; const seenNow=new Set();
-    while(out.length<12 && any){
-      any=false;
-      for(const t of topics){
-        const p=buffers[t]?.shift();
-        if(p){ any=true; if(!seenNow.has(p.id)){ seenNow.add(p.id); out.push(p);} }
-      }
+      // interleave a few from each topic as soon as it's available
+      const out=[]; let n=0;
+      while(n<6 && buffers[t].length){ const p=buffers[t].shift(); if(!shown.has(p.id)){ shown.add(p.id); out.push(p); n++; } }
+      if(out.length){ total+=out.length; onItems(out); }
     }
-    return out;
+    return total;
   }
 
   // ---------- render ----------
@@ -250,24 +272,24 @@
   async function loadMore(){
     if(loading) return; loading=true; showLoader();
     try{
-      let items;
-      if(mode==='saved'){ items=[]; }
-      else items=await nextBatch();
+      let n=0;
+      if(mode!=='saved') n=await nextBatch(items=>{ hideLoader(); items.forEach(p=>feed.appendChild(card(p))); showLoader(); });
       hideLoader();
-      if(!items.length){
+      if(!n){
+        const allDone=activeTopics().every(t=>exhausted[t]);
         if(!feed.querySelector('.card')){
           feed.innerHTML=mode==='saved'
             ?`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`
-            :`<div class="empty">Nothing found${state.topics.length?' for these topics':''}.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`;
-        } else if(mode!=='saved'){
-          const d=document.createElement('div');d.className='empty';d.innerHTML='You reached the end of arXiv for these topics.<br>Impressive. Add more topics or reset "seen".';feed.appendChild(d);
+            :(allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:`<div class="empty">Couldn't load papers right now.<br>Tap <b>↻</b> to try again.</div>`);
+        } else if(mode!=='saved' && allDone && !feed.querySelector('.end')){
+          const d=document.createElement('div');d.className='empty end';d.innerHTML='You reached the end of arXiv for these topics.<br>Add more topics or reset "seen".';feed.appendChild(d);
         }
-      } else items.forEach(p=>feed.appendChild(card(p)));
+      }
     } finally { loading=false; }
   }
 
   function resetFeed(){
-    cursors={};buffers={};exhausted={};feed.innerHTML='';
+    cursors={};buffers={};exhausted={};failures={};shown.clear();feed.innerHTML='';
     if(mode==='saved'){
       const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
       if(!list.length) feed.innerHTML=`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`;
