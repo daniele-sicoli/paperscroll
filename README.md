@@ -6,7 +6,7 @@ A phone-friendly feed for doomscrolling research papers on the topics you care a
 
 ## What it does
 
-- Type topics or keywords; each becomes a search on [OpenAlex](https://openalex.org) (arXiv preprints + journals).
+- Type topics or keywords; each is searched on [OpenAlex](https://openalex.org), [Semantic Scholar](https://www.semanticscholar.org), [Crossref](https://www.crossref.org) and optionally [Europe PMC](https://europepmc.org) — arXiv preprints plus journals — with duplicates merged. Sources are toggleable.
 - Swipe through one paper per screen: venue, date, citations, authors, abstract, with **Open** / **PDF** / **Save** / **Copy**.
 - Keyword variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only when the keywords appear close together in the title or abstract. Quotes and AND / OR / NOT give you exact control.
 - Sort by newest, most cited, or relevance; mix topics or view one at a time.

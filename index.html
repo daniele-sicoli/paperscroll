@@ -100,7 +100,7 @@
       <input id="newTopic" placeholder='e.g. thermosphere density, "SINDy", space weather'>
       <button class="primary" id="addTopic">Add</button>
     </div>
-    <div class="hint">Each topic is one search on OpenAlex (covers arXiv preprints and journals). Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>.</div>
+    <div class="hint">Each topic is searched on every enabled source below. Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>.</div>
     <div class="topiclist" id="topicList"></div>
     <div class="lim" id="limLabel"></div>
 
@@ -118,6 +118,15 @@
       <button data-v="abs">Abstract only</button>
       <button data-v="full">Full text (loose)</button>
     </div>
+
+    <label>Sources</label>
+    <div class="seg" id="srcSeg">
+      <button data-v="openalex">OpenAlex</button>
+      <button data-v="s2">Semantic Scholar</button>
+      <button data-v="crossref">Crossref</button>
+      <button data-v="epmc">Europe PMC</button>
+    </div>
+    <div class="hint">OpenAlex and Crossref cover all fields; Semantic Scholar is strongest in CS, physics and engineering; Europe PMC is life sciences and medicine. Duplicates across sources are merged.</div>
 
     <label>Feed</label>
     <div class="seg" id="mixSeg">
@@ -189,10 +198,10 @@
   const cacheGet=k=>{try{const v=JSON.parse(localStorage.getItem('oa:'+k));return v&&Date.now()-v.t<CACHE_TTL?v.d:null}catch(e){return null}};
   const cachePut=(k,d)=>{try{localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}))}catch(e){/* full: drop oldest */ try{Object.keys(localStorage).filter(x=>x.startsWith('oa:')).slice(0,20).forEach(x=>localStorage.removeItem(x))}catch(_){}}};
   class QuotaError extends Error{constructor(){super('quota');this.quota=true}}
-  async function getJSON(url){
+  async function getJSON(url,opts={}){
     const key=url.replace(/[?&]api_key=[^&]*/,'');
     const c=cacheGet(key); if(c) return c;
-    if(quotaHit&&Date.now()<quotaHit) throw new QuotaError();
+    if(opts.quota&&quotaHit&&Date.now()<quotaHit) throw new QuotaError();
     let err;
     for(let i=0;i<3;i++){
       try{
@@ -202,7 +211,8 @@
           // Per-second limit → brief retry once; daily budget → stop until reset.
           let body=''; try{body=await res.text()}catch(e){}
           const daily=/daily|budget|quota|limit exceeded/i.test(body)||i>=1;
-          if(daily){ quotaHit=nextResetUTC(); throw new QuotaError(); }
+          if(daily&&opts.quota){ quotaHit=nextResetUTC(); throw new QuotaError(); }
+          if(daily) throw new Error('rate limited');
           await sleep(1200); continue;
         }
         if(res.status>=500){ err=new Error('busy '+res.status); await sleep(1500*(i+1)); continue; }
@@ -219,7 +229,6 @@
     for(const [w,pos] of Object.entries(inv)) for(const i of pos) words[i]=w;
     return words.join(' ').replace(/\s+/g,' ').trim();
   }
-  const SORTS={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'};
   const PER=50;
 
   const hasOps=t=>/"|\b(AND|OR|NOT)\b|[()]/.test(t);
@@ -247,61 +256,130 @@
     return near(p.title,12)||near(p.summary,8);
   }
 
-  async function fetchTopic(topic){
-    if(exhausted[topic]) return [];
-    const page=(cursors[topic]||0)+1;
-    const term=searchTerm(topic);
-    const q=encodeURIComponent(term);
-    const today=new Date().toISOString().slice(0,10);
-    const filters=['has_abstract:true','to_publication_date:'+today,'type:article|preprint|review'];
-    const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':state.field==='full'?'fulltext.search':'title_and_abstract.search';
-    let search='';
-    if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
-    const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,primary_topic,cited_by_count,type';
-    const mailto=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
-    const url=`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${SORTS[state.sort]||SORTS.submittedDate}&per-page=${PER}&page=${page}&select=${sel}${mailto}`;
-    const data=await getJSON(url);
-    const results=data.results||[];
-    cursors[topic]=page;
-    if(results.length<PER || page>=40) exhausted[topic]=true;
-    return results.map(w=>{
-      const loc=w.primary_location||{};
-      const landing=loc.landing_page_url||w.doi||w.id;
-      const arx=/arxiv\.org\/abs\//.test(landing||'');
-      return {
-        id:w.id.replace('https://openalex.org/',''),
-        url:landing, pdf:w.open_access?.oa_url||loc.pdf_url||'',
-        title:(w.display_name||w.title||'Untitled').trim(),
-        summary:deinvert(w.abstract_inverted_index),
-        authors:(w.authorships||[]).map(a=>a.author?.display_name||'').filter(Boolean),
-        published:w.publication_date||'', updated:'',
-        cat:arx?'arXiv':(loc.source?.display_name||w.type||''),
-        cites:w.cited_by_count||0,
-        topic
-      };
-    });
+  // ---------- sources ----------
+  // Each source: fetch(topic, cursorState) -> {items:[normalized paper], next:cursorState|null}
+  const today=()=>new Date().toISOString().slice(0,10);
+  const normTitle=t=>t.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,80);
+  const dedupKey=p=>p.doi?('doi:'+p.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//,'')):('t:'+normTitle(p.title));
+  const stripTags=h=>String(h||'').replace(/<[^>]+>/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
+
+  const SOURCES={
+    openalex:{ label:'OpenAlex', quota:true,
+      async fetch(topic,cur){
+        const page=(cur||0)+1;
+        const q=encodeURIComponent(searchTerm(topic));
+        const filters=['has_abstract:true','to_publication_date:'+today(),'type:article|preprint|review'];
+        const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':'title_and_abstract.search';
+        let search=''; if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
+        const sort={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'}[state.sort];
+        const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,cited_by_count,type';
+        const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
+        const data=await getJSON(`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
+        const results=data.results||[];
+        const items=results.map(w=>{
+          const loc=w.primary_location||{}; const landing=loc.landing_page_url||w.doi||w.id;
+          return { id:'oa:'+w.id.replace('https://openalex.org/',''), doi:w.doi||'', url:landing, pdf:w.open_access?.oa_url||loc.pdf_url||'',
+            title:(w.display_name||w.title||'Untitled').trim(), summary:deinvert(w.abstract_inverted_index),
+            authors:(w.authorships||[]).map(a=>a.author?.display_name||'').filter(Boolean),
+            published:w.publication_date||'', cat:/arxiv\.org\/abs\//.test(landing||'')?'arXiv':(loc.source?.display_name||w.type||''), cites:w.cited_by_count||0, src:'OpenAlex' };
+        });
+        return {items, next:(results.length<PER||page>=40)?null:page};
+      }},
+    s2:{ label:'Semantic Scholar',
+      async fetch(topic,cur){
+        const fields='title,abstract,authors,publicationDate,year,externalIds,openAccessPdf,venue,citationCount,url';
+        const q=encodeURIComponent(searchTerm(topic));
+        let data, items, next;
+        if(state.sort==='relevance'){
+          const off=cur||0;
+          data=await getJSON(`https://api.semanticscholar.org/graph/v1/paper/search?query=${q}&offset=${off}&limit=${PER}&fields=${fields}`);
+          next=(data.next!=null&&data.data?.length)?data.next:null;
+        } else {
+          const sort=state.sort==='lastUpdatedDate'?'citationCount:desc':'publicationDate:desc';
+          const tok=cur?`&token=${encodeURIComponent(cur)}`:'';
+          data=await getJSON(`https://api.semanticscholar.org/graph/v1/paper/search/bulk?query=${q}&sort=${sort}&fields=${fields}${tok}`);
+          next=data.token||null;
+        }
+        items=(data.data||[]).filter(w=>w.abstract).map(w=>{
+          const doi=w.externalIds?.DOI||''; const arx=w.externalIds?.ArXiv;
+          return { id:'s2:'+w.paperId, doi, url:arx?`https://arxiv.org/abs/${arx}`:(doi?`https://doi.org/${doi}`:w.url), pdf:w.openAccessPdf?.url||(arx?`https://arxiv.org/pdf/${arx}`:''),
+            title:(w.title||'Untitled').trim(), summary:w.abstract||'', authors:(w.authors||[]).map(a=>a.name).filter(Boolean),
+            published:w.publicationDate||(w.year?String(w.year):''), cat:arx?'arXiv':(w.venue||''), cites:w.citationCount||0, src:'Semantic Scholar' };
+        });
+        return {items, next};
+      }},
+    crossref:{ label:'Crossref',
+      async fetch(topic,cur){
+        const off=cur||0;
+        const q=encodeURIComponent(keywords(topic).join(' ')||topic);
+        const sort={submittedDate:'published&order=desc',lastUpdatedDate:'is-referenced-by-count&order=desc',relevance:'relevance&order=desc'}[state.sort];
+        const filter=`has-abstract:true,until-pub-date:${today()},type:journal-article,type:posted-content`;
+        const mailto=cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'';
+        const data=await getJSON(`https://api.crossref.org/works?query.bibliographic=${q}&filter=${filter}&sort=${sort}&rows=${PER}&offset=${off}&select=DOI,title,abstract,author,issued,container-title,is-referenced-by-count,URL,link,subtype${mailto}`);
+        const results=data.message?.items||[];
+        const items=results.map(w=>{
+          const dp=(w.issued?.['date-parts']||[[]])[0]||[]; const published=dp.length?`${dp[0]}-${String(dp[1]||1).padStart(2,'0')}-${String(dp[2]||1).padStart(2,'0')}`:'';
+          const pdf=(w.link||[]).find(l=>/pdf/i.test(l['content-type']||''))?.URL||'';
+          return { id:'cr:'+w.DOI, doi:w.DOI, url:`https://doi.org/${w.DOI}`, pdf,
+            title:stripTags((w.title||[])[0]||'Untitled'), summary:stripTags(w.abstract).replace(/^abstract\s*/i,''),
+            authors:(w.author||[]).map(a=>[a.given,a.family].filter(Boolean).join(' ')).filter(Boolean),
+            published, cat:(w['container-title']||[])[0]||(w.subtype==='preprint'?'preprint':''), cites:w['is-referenced-by-count']||0, src:'Crossref' };
+        });
+        return {items, next:(results.length<PER||off+PER>=1000)?null:off+PER};
+      }},
+    epmc:{ label:'Europe PMC',
+      async fetch(topic,cur){
+        const term=hasOps(topic)?topic:keywords(topic).join(' AND ');
+        const q=encodeURIComponent(`(${term}) AND HAS_ABSTRACT:Y AND (SRC:MED OR SRC:PPR OR SRC:PMC)`);
+        const sort={submittedDate:'&sort=P_PDATE_D desc',lastUpdatedDate:'&sort=CITED desc',relevance:''}[state.sort];
+        const cm=encodeURIComponent(cur||'*');
+        const data=await getJSON(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${q}&format=json&resultType=core&pageSize=${PER}&cursorMark=${cm}${encodeURI(sort)}`);
+        const results=data.resultList?.result||[];
+        const items=results.map(w=>{
+          const pdf=(w.fullTextUrlList?.fullTextUrl||[]).find(u=>u.documentStyle==='pdf')?.url||'';
+          return { id:'ep:'+w.source+':'+w.id, doi:w.doi||'', url:w.doi?`https://doi.org/${w.doi}`:`https://europepmc.org/abstract/${w.source}/${w.id}`, pdf,
+            title:(w.title||'Untitled').replace(/\.$/,''), summary:w.abstractText||'', authors:(w.authorString||'').split(/,\s*/).filter(Boolean),
+            published:w.firstPublicationDate||'', cat:w.journalInfo?.journal?.title||(w.source==='PPR'?'preprint':''), cites:w.citedByCount||0, src:'Europe PMC' };
+        });
+        const next=(data.nextCursorMark&&results.length===PER)?data.nextCursorMark:null;
+        return {items, next};
+      }}
+  };
+  const DEFAULT_SOURCES=['openalex','s2','crossref'];
+  const enabledSources=()=>(state.sources&&state.sources.length?state.sources:DEFAULT_SOURCES).filter(k=>SOURCES[k]);
+
+  // A "stream" is one topic on one source.
+  const streamKey=(t,src)=>t+'\u0001'+src;
+  async function fetchStream(t,src){
+    const k=streamKey(t,src);
+    if(exhausted[k]) return [];
+    const {items,next}=await SOURCES[src].fetch(t,cursors[k]);
+    if(next==null) exhausted[k]=true; else cursors[k]=next;
+    return items.map(p=>Object.assign(p,{topic:t}));
   }
 
   function activeTopics(){ return mode==='saved'?[]:(state.mix==='one'&&state.active?[state.active]:(state.active?[state.active,...state.topics.filter(t=>t!==state.active)]:state.topics)); }
-  const shown=new Set(); let failures={};
+  const shown=new Set(), shownKeys=new Set(); let failures={};
+  const allExhausted=()=>activeTopics().every(t=>enabledSources().every(src=>exhausted[streamKey(t,src)]));
 
-  // Fetch all topics in parallel (OpenAlex allows ~10 req/s) and hand papers to onItems as each arrives.
-  // If a page is all already-seen papers, keep paging (up to 3 pages) so the feed doesn't stall.
+  // Fetch every topic × source in parallel; hand papers to onItems as each stream answers.
   async function nextBatch(onItems){
-    const topics=activeTopics();
-    if(!topics.length) return 0;
-    let total=0, pending=topics.length;
-    const label=()=>showLoader(pending>1?`Searching ${pending} topics…`:`Searching “${topics.find(t=>!done.has(t))||''}”…`);
-    const done=new Set(); label();
-    await Promise.all(topics.map(async t=>{
-      buffers[t]=buffers[t]||[];
-      for(let hop=0; hop<2 && buffers[t].length<5 && !exhausted[t]; hop++){
-        try{ const got=await fetchTopic(t); failures[t]=0; buffers[t].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
-        catch(e){ console.warn(e); if(e.quota){ break; } failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('Search failed for "'+t+'" — tap ↻ to retry'); } break; }
+    const topics=activeTopics(), srcs=enabledSources();
+    if(!topics.length||!srcs.length) return 0;
+    const streams=[]; for(const t of topics) for(const src of srcs) streams.push([t,src]);
+    let total=0, pending=streams.length;
+    const label=()=>showLoader(`Searching ${topics.length} topic${topics.length>1?'s':''} on ${srcs.length} source${srcs.length>1?'s':''}… (${pending} left)`);
+    label();
+    await Promise.all(streams.map(async([t,src])=>{
+      const k=streamKey(t,src); buffers[k]=buffers[k]||[];
+      for(let hop=0; hop<2 && buffers[k].length<4 && !exhausted[k]; hop++){
+        try{ const got=await fetchStream(t,src); failures[k]=0;
+          buffers[k].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
+        catch(e){ console.warn(src,e); if(e.quota){ exhausted[k]=true; break; } failures[k]=(failures[k]||0)+1; if(failures[k]>=2){ exhausted[k]=true; } break; }
       }
       const out=[]; let n=0;
-      while(n<6 && buffers[t].length){ const p=buffers[t].shift(); if(!shown.has(p.id)){ shown.add(p.id); out.push(p); n++; } }
-      done.add(t); pending--;
+      while(n<4 && buffers[k].length){ const p=buffers[k].shift(); const dk=dedupKey(p); if(!shown.has(p.id)&&!shownKeys.has(dk)){ shown.add(p.id); shownKeys.add(dk); out.push(p); n++; } }
+      pending--;
       if(out.length){ total+=out.length; onItems(out); }
       if(pending>0) label();
     }));
@@ -310,7 +388,7 @@
 
   function quotaMsg(){
     const t=new Date(quotaHit).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
-    return `<div class="empty">Today's free OpenAlex search quota is used up.<br>It resets at <b>${t}</b>.<br><br>Want 10× more? Get a free key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
+    return `<div class="empty">OpenAlex's free daily quota is used up (resets at <b>${t}</b>); other sources are still searched.<br><br>Want 10× more? Get a free key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
   }
 
   // ---------- render ----------
@@ -319,7 +397,7 @@
     const isSaved=!!state.saved[p.id];
     const auth=p.authors.length>6?p.authors.slice(0,6).join(', ')+' … (+'+(p.authors.length-6)+')':p.authors.join(', ');
     el.innerHTML=`
-      <div class="meta">${p.cat?`<span class="tag">${esc(p.cat)}</span>`:''}<span>${fmtDate(p.published)}</span>${p.cites?`<span>· ${p.cites} cites</span>`:''}<span class="kw">· ${esc(p.topic||'saved')}</span></div>
+      <div class="meta">${p.cat?`<span class="tag">${esc(p.cat)}</span>`:''}<span>${fmtDate(p.published)}</span>${p.cites?`<span>· ${p.cites} cites</span>`:''}<span class="kw">· ${esc(p.topic||'saved')}${p.src?` · ${esc(p.src)}`:''}</span></div>
       <h2 class="ttl">${esc(p.title)}</h2>
       <div class="auth">${esc(auth)}</div>
       <div class="abs clamp">${esc(p.summary||'(no abstract available)')}</div>
@@ -355,7 +433,7 @@
       if(mode!=='saved') n=await nextBatch(items=>{ hideLoader(); items.forEach(p=>feed.appendChild(card(p))); showLoader(); });
       hideLoader();
       if(!n){
-        const allDone=activeTopics().every(t=>exhausted[t]);
+        const allDone=allExhausted();
         if(!feed.querySelector('.card')){
           feed.innerHTML=mode==='saved'
             ?`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`
@@ -370,7 +448,7 @@
   }
 
   function resetFeed(){
-    cursors={};buffers={};exhausted={};failures={};shown.clear();feed.innerHTML='';
+    cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
     if(mode==='saved'){
       const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
       if(!list.length) feed.innerHTML=`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`;
@@ -432,7 +510,8 @@
   }
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
-  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');seg('#mixSeg','mix');sheet.classList.add('open');};
+  function renderSrcSeg(){ const en=enabledSources(); [...$('#srcSeg').children].forEach(b=>{ b.classList.toggle('on',en.includes(b.dataset.v)); b.onclick=()=>{ let cur=enabledSources().slice(); if(cur.includes(b.dataset.v)){ if(cur.length===1){toast('Keep at least one source');return;} cur=cur.filter(x=>x!==b.dataset.v);} else cur.push(b.dataset.v); state.sources=cur; save(); renderSrcSeg(); }; }); }
+  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');seg('#mixSeg','mix');sheet.classList.add('open');};
   const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
   $('#closeSheet').onclick=closeSheet;
   sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
@@ -497,7 +576,7 @@
       state.topics=topics;
       state.saved=Object.assign({},data.saved||{},state.saved);
       state.seen=Object.assign({},data.seen||{},state.seen);
-      if(data.settings){ for(const k of ['sort','field','mix']) if(data.settings[k]) state[k]=data.settings[k]; }
+      if(data.settings){ for(const k of ['sort','field','mix','sources']) if(data.settings[k]) state[k]=data.settings[k]; }
     }
     SS('ps_state',state);
     await pushNow();
@@ -507,7 +586,7 @@
   async function pushNow(){
     if(!sb||!user) return;
     const seenKeys=Object.keys(state.seen); const seen=seenKeys.length>2000?Object.fromEntries(seenKeys.slice(-2000).map(k=>[k,1])):state.seen;
-    const {error}=await sb.from('user_data').upsert({user_id:user.id,topics:state.topics,saved:state.saved,seen,settings:{sort:state.sort,field:state.field,mix:state.mix},updated_at:new Date().toISOString()});
+    const {error}=await sb.from('user_data').upsert({user_id:user.id,topics:state.topics,saved:state.saved,seen,settings:{sort:state.sort,field:state.field,mix:state.mix,sources:state.sources},updated_at:new Date().toISOString()});
     if(error) console.warn('sync',error.message);
   }
   async function initCloud(){
