@@ -12,6 +12,10 @@ A phone-friendly feed for doomscrolling research papers on the topics you care a
 - Sort by newest, most cited, or relevance; mix topics or view one at a time.
 - Infinite scroll, skips what you've already seen, and a saved list — all stored locally in your browser. Nothing is sent anywhere except the search queries to OpenAlex.
 
+## OpenAlex quota
+
+OpenAlex gives each connection roughly 100 free searches per day without a key (resets at midnight UTC). Each topic page is one search, and results are cached for 3 hours, so normal use fits comfortably. Heavy users can paste a free OpenAlex API key (≈1,000 searches/day) under **Topics → OpenAlex API key**; it never leaves their device.
+
 ## Use it on your phone
 
 Open the link in Safari or Chrome → Share → **Add to Home Screen**.

@@ -125,6 +125,10 @@
       <button data-v="one">One topic at a time</button>
     </div>
 
+    <label>OpenAlex API key (optional)</label>
+    <input id="oaKey" type="password" placeholder="Paste your free key for 10× the daily search quota" autocomplete="off">
+    <div class="hint">OpenAlex gives ~100 free searches/day per connection without a key, ~1,000 with a free account key from <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a>. The key stays on this device only.</div>
+
     <div class="row" style="margin-top:18px">
       <button id="clearSeen" style="flex:1">Reset "seen" history</button>
       <button class="primary" id="closeSheet" style="flex:1">Done</button>
@@ -177,16 +181,35 @@
   
   // ---------- OpenAlex ----------
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  // OpenAlex has a daily free budget (~100 searches/day without a key, ~1000 with a free key).
+  // Cache pages for 3 h and stop retrying once the budget is hit.
+  let quotaHit=null; // ms timestamp of reset, or null
+  const nextResetUTC=()=>{const d=new Date();return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()+1)};
+  const CACHE_TTL=3*3600*1000;
+  const cacheGet=k=>{try{const v=JSON.parse(localStorage.getItem('oa:'+k));return v&&Date.now()-v.t<CACHE_TTL?v.d:null}catch(e){return null}};
+  const cachePut=(k,d)=>{try{localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}))}catch(e){/* full: drop oldest */ try{Object.keys(localStorage).filter(x=>x.startsWith('oa:')).slice(0,20).forEach(x=>localStorage.removeItem(x))}catch(_){}}};
+  class QuotaError extends Error{constructor(){super('quota');this.quota=true}}
   async function getJSON(url){
+    const key=url.replace(/[?&]api_key=[^&]*/,'');
+    const c=cacheGet(key); if(c) return c;
+    if(quotaHit&&Date.now()<quotaHit) throw new QuotaError();
     let err;
     for(let i=0;i<3;i++){
       try{
         const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),15000);
         const res=await fetch(url,{cache:'no-store',signal:ctl.signal}).finally(()=>clearTimeout(tm));
-        if(res.status===429||res.status>=500){ err=new Error('busy '+res.status); await sleep(1500*(i+1)); continue; }
+        if(res.status===429){
+          // Per-second limit → brief retry once; daily budget → stop until reset.
+          let body=''; try{body=await res.text()}catch(e){}
+          const daily=/daily|budget|quota|limit exceeded/i.test(body)||i>=1;
+          if(daily){ quotaHit=nextResetUTC(); throw new QuotaError(); }
+          await sleep(1200); continue;
+        }
+        if(res.status>=500){ err=new Error('busy '+res.status); await sleep(1500*(i+1)); continue; }
+        if(res.status===403||res.status===401) throw new Error('OpenAlex rejected the API key');
         if(!res.ok) throw new Error('OpenAlex '+res.status);
-        return await res.json();
-      }catch(e){ err=e; await sleep(1000*(i+1)); }
+        const data=await res.json(); cachePut(key,data); return data;
+      }catch(e){ if(e.quota) throw e; err=e; await sleep(1000*(i+1)); }
     }
     throw err;
   }
@@ -197,7 +220,7 @@
     return words.join(' ').replace(/\s+/g,' ').trim();
   }
   const SORTS={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'};
-  const PER=25;
+  const PER=50;
 
   const hasOps=t=>/"|\b(AND|OR|NOT)\b|[()]/.test(t);
   const STOP=new Set(['the','and','for','with','from','into','using','based','of','in','on','a','an','to','via','by','at','as']);
@@ -235,7 +258,7 @@
     let search='';
     if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
     const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,primary_topic,cited_by_count,type';
-    const mailto=cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'';
+    const mailto=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
     const url=`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${SORTS[state.sort]||SORTS.submittedDate}&per-page=${PER}&page=${page}&select=${sel}${mailto}`;
     const data=await getJSON(url);
     const results=data.results||[];
@@ -272,9 +295,9 @@
     const done=new Set(); label();
     await Promise.all(topics.map(async t=>{
       buffers[t]=buffers[t]||[];
-      for(let hop=0; hop<3 && buffers[t].length<5 && !exhausted[t]; hop++){
+      for(let hop=0; hop<2 && buffers[t].length<5 && !exhausted[t]; hop++){
         try{ const got=await fetchTopic(t); failures[t]=0; buffers[t].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
-        catch(e){ console.warn(e); failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('Search failed for "'+t+'" — tap ↻ to retry'); } break; }
+        catch(e){ console.warn(e); if(e.quota){ break; } failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('Search failed for "'+t+'" — tap ↻ to retry'); } break; }
       }
       const out=[]; let n=0;
       while(n<6 && buffers[t].length){ const p=buffers[t].shift(); if(!shown.has(p.id)){ shown.add(p.id); out.push(p); n++; } }
@@ -283,6 +306,11 @@
       if(pending>0) label();
     }));
     return total;
+  }
+
+  function quotaMsg(){
+    const t=new Date(quotaHit).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+    return `<div class="empty">Today's free OpenAlex search quota is used up.<br>It resets at <b>${t}</b>.<br><br>Want 10× more? Get a free key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
   }
 
   // ---------- render ----------
@@ -331,7 +359,9 @@
         if(!feed.querySelector('.card')){
           feed.innerHTML=mode==='saved'
             ?`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`
-            :(allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:`<div class="empty">Couldn't load papers right now.<br>Tap <b>↻</b> to try again.</div>`);
+            :(quotaHit&&Date.now()<quotaHit?quotaMsg():allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:`<div class="empty">Couldn't load papers right now.<br>Tap <b>↻</b> to try again.</div>`);
+        } else if(mode!=='saved' && quotaHit&&Date.now()<quotaHit && !feed.querySelector('.end')){
+          const d=document.createElement('div');d.className='empty end';d.innerHTML=quotaMsg();feed.appendChild(d);
         } else if(mode!=='saved' && allDone && !feed.querySelector('.end')){
           const d=document.createElement('div');d.className='empty end';d.innerHTML='You reached the end of the results for these topics.<br>Add more topics or reset "seen".';feed.appendChild(d);
         }
@@ -402,12 +432,12 @@
   }
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
-  $('#btnTopics').onclick=()=>{renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');seg('#mixSeg','mix');sheet.classList.add('open');};
-  const closeSheet=()=>{sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
+  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');seg('#mixSeg','mix');sheet.classList.add('open');};
+  const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
   $('#closeSheet').onclick=closeSheet;
   sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
   $('#clearSeen').onclick=()=>{state.seen={};save();toast('Seen history cleared');};
-  $('#btnRefresh').onclick=()=>{mode='feed';renderChips();resetFeed();toast('Refreshed');};
+  $('#btnRefresh').onclick=()=>{quotaHit=null;mode='feed';renderChips();resetFeed();toast('Refreshed');};
   $('#btnSaved').onclick=()=>{mode=mode==='saved'?'feed':'saved';renderChips();resetFeed();};
 
   // ---------- account / Pro / sync ----------
