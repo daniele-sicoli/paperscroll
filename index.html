@@ -69,12 +69,20 @@
   .seg button.on{background:var(--accent);color:#06101f}
   .toast{position:fixed;left:50%;bottom:calc(24px + var(--sab));transform:translateX(-50%);background:#263246;color:var(--text);padding:10px 14px;border-radius:12px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30;pointer-events:none;max-width:90vw;text-align:center}
   .toast.show{opacity:1}
+  .pro{display:inline-block;background:linear-gradient(90deg,#ffb86b,#ff7ab6);color:#1a1020;font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;vertical-align:middle;letter-spacing:.4px}
+  .acct{background:var(--bg);border-radius:12px;padding:12px;font-size:14px;line-height:1.5}
+  .acct .em{color:var(--accent);word-break:break-all}
+  .upsell{background:linear-gradient(135deg,#1b2a4a,#2a1b3a);border:1px solid #3a4a7a;border-radius:14px;padding:14px;margin-top:12px}
+  .upsell h3{margin:0 0 6px;font-size:15px}
+  .upsell ul{margin:6px 0 10px;padding-left:18px;color:#cdd5e3;font-size:14px;line-height:1.5}
+  .lim{font-size:12px;color:var(--accent2);margin-top:6px}
 </style>
 </head>
 <body>
 <header>
   <div class="row">
     <h1>Paper<span>Scroll</span></h1>
+    <button class="icon" id="btnAccount" title="Account">👤</button>
     <button class="icon" id="btnSaved" title="Saved">🔖</button>
     <button class="icon" id="btnRefresh" title="Refresh">↻</button>
     <button class="primary" id="btnTopics">Topics</button>
@@ -94,6 +102,7 @@
     </div>
     <div class="hint">Each topic is one search on OpenAlex (covers arXiv preprints and journals). Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>.</div>
     <div class="topiclist" id="topicList"></div>
+    <div class="lim" id="limLabel"></div>
 
     <label>Sort</label>
     <div class="seg" id="sortSeg">
@@ -123,8 +132,20 @@
   </div>
 </div>
 
+<div class="sheet" id="acctSheet">
+  <div class="panel">
+    <h2>Account</h2>
+    <div id="acctBody"></div>
+    <div class="row" style="margin-top:16px">
+      <button class="primary" id="closeAcct" style="flex:1">Done</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
 <script>
 (function(){
   const $=s=>document.querySelector(s);
@@ -137,8 +158,13 @@
     topics:[], active:null, sort:'submittedDate', field:'all', mix:'mix',
     saved:{}, seen:{}
   }, LS('ps_state')||{});
-  if(!state.topics.length){ state.topics=['thermosphere density', 'space weather', 'orbit determination']; }
-  const save=()=>SS('ps_state',state);
+  if(!state.topics.length){ state.topics=['space weather', 'thermosphere density']; }
+  const FREE_TOPICS=3;
+  let user=null, isPro=false, sb=null, pushTimer=null;
+  const cfg=window.PAPERSCROLL_CONFIG||{};
+  const cloudOn=!!(cfg.SUPABASE_URL&&cfg.SUPABASE_ANON_KEY&&window.supabase);
+  const save=()=>{ SS('ps_state',state); schedulePush(); };
+  const canAddTopic=()=>isPro||state.topics.length<FREE_TOPICS;
 
   // per-topic paging & buffers
   let cursors={}, buffers={}, exhausted={}, loading=false, mode='feed'; // 'feed' | 'saved'
@@ -155,7 +181,8 @@
     let err;
     for(let i=0;i<3;i++){
       try{
-        const res=await fetch(url,{cache:'no-store'});
+        const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),15000);
+        const res=await fetch(url,{cache:'no-store',signal:ctl.signal}).finally(()=>clearTimeout(tm));
         if(res.status===429||res.status>=500){ err=new Error('busy '+res.status); await sleep(1500*(i+1)); continue; }
         if(!res.ok) throw new Error('OpenAlex '+res.status);
         return await res.json();
@@ -208,7 +235,8 @@
     let search='';
     if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
     const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,primary_topic,cited_by_count,type';
-    const url=`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${SORTS[state.sort]||SORTS.submittedDate}&per-page=${PER}&page=${page}&select=${sel}`;
+    const mailto=cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'';
+    const url=`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${SORTS[state.sort]||SORTS.submittedDate}&per-page=${PER}&page=${page}&select=${sel}${mailto}`;
     const data=await getJSON(url);
     const results=data.results||[];
     cursors[topic]=page;
@@ -234,23 +262,26 @@
   function activeTopics(){ return mode==='saved'?[]:(state.mix==='one'&&state.active?[state.active]:(state.active?[state.active,...state.topics.filter(t=>t!==state.active)]:state.topics)); }
   const shown=new Set(); let failures={};
 
-  // Fetch topics one by one and hand papers to onItems as each arrives.
+  // Fetch all topics in parallel (OpenAlex allows ~10 req/s) and hand papers to onItems as each arrives.
+  // If a page is all already-seen papers, keep paging (up to 3 pages) so the feed doesn't stall.
   async function nextBatch(onItems){
     const topics=activeTopics();
     if(!topics.length) return 0;
-    let total=0;
-    for(const t of topics){
+    let total=0, pending=topics.length;
+    const label=()=>showLoader(pending>1?`Searching ${pending} topics…`:`Searching “${topics.find(t=>!done.has(t))||''}”…`);
+    const done=new Set(); label();
+    await Promise.all(topics.map(async t=>{
       buffers[t]=buffers[t]||[];
-      if(buffers[t].length<5 && !exhausted[t]){
-        showLoader(`Searching “${t}”…`);
+      for(let hop=0; hop<3 && buffers[t].length<5 && !exhausted[t]; hop++){
         try{ const got=await fetchTopic(t); failures[t]=0; buffers[t].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
-        catch(e){ console.warn(e); failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('Search failed for "'+t+'" — tap ↻ to retry'); } }
+        catch(e){ console.warn(e); failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('Search failed for "'+t+'" — tap ↻ to retry'); } break; }
       }
-      // interleave a few from each topic as soon as it's available
       const out=[]; let n=0;
       while(n<6 && buffers[t].length){ const p=buffers[t].shift(); if(!shown.has(p.id)){ shown.add(p.id); out.push(p); n++; } }
+      done.add(t); pending--;
       if(out.length){ total+=out.length; onItems(out); }
-    }
+      if(pending>0) label();
+    }));
     return total;
   }
 
@@ -345,6 +376,7 @@
   // ---------- sheet ----------
   const sheet=$('#sheet');
   function renderTopicList(){
+    renderLimit();
     const l=$('#topicList');l.innerHTML='';
     state.topics.forEach((t,i)=>{
       const d=document.createElement('div');d.innerHTML=`<span>${esc(t)}</span><b title="Remove">✕</b>`;
@@ -359,8 +391,14 @@
   function addTopic(){
     const v=$('#newTopic').value.trim();
     if(!v) return;
-    if(!state.topics.includes(v)) state.topics.push(v);
+    if(state.topics.includes(v)){ $('#newTopic').value=''; return; }
+    if(!canAddTopic()){ sheet.classList.remove('open'); openAccount(true); return; }
+    state.topics.push(v);
     $('#newTopic').value='';save();renderTopicList();
+  }
+  function renderLimit(){
+    const l=$('#limLabel');
+    l.textContent=isPro?'Pro: unlimited topics, synced to the cloud.':`Free plan: ${state.topics.length}/${FREE_TOPICS} topics. Upgrade for unlimited topics + sync.`;
   }
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
@@ -372,7 +410,94 @@
   $('#btnRefresh').onclick=()=>{mode='feed';renderChips();resetFeed();toast('Refreshed');};
   $('#btnSaved').onclick=()=>{mode=mode==='saved'?'feed':'saved';renderChips();resetFeed();};
 
+  // ---------- account / Pro / sync ----------
+  const acctSheet=$('#acctSheet');
+  $('#closeAcct').onclick=()=>acctSheet.classList.remove('open');
+  acctSheet.addEventListener('click',e=>{if(e.target===acctSheet)acctSheet.classList.remove('open')});
+  $('#btnAccount').onclick=()=>openAccount(false);
+
+  function upgradeUrl(){
+    if(!cfg.STRIPE_PAYMENT_LINK||!user) return '#';
+    const u=new URL(cfg.STRIPE_PAYMENT_LINK);
+    u.searchParams.set('client_reference_id',user.id);
+    if(user.email) u.searchParams.set('prefilled_email',user.email);
+    return u.toString();
+  }
+  function openAccount(upsell){
+    const b=$('#acctBody');
+    if(!cloudOn){
+      b.innerHTML=`<div class="acct">Accounts aren't configured on this deployment yet, so topics and saved papers live only in this browser.</div>`;
+    } else if(!user){
+      b.innerHTML=`${upsell?`<div class="acct">You've reached the free limit of ${FREE_TOPICS} topics. Sign in to upgrade.</div>`:''}
+        <label>Email</label><input id="loginEmail" type="email" placeholder="you@university.edu" autocomplete="email">
+        <div class="hint">We'll email you a one-tap sign-in link. No password.</div>
+        <button class="primary" id="sendLink" style="margin-top:10px;width:100%">Send sign-in link</button>`;
+      $('#sendLink').onclick=async()=>{
+        const email=$('#loginEmail').value.trim(); if(!email) return;
+        $('#sendLink').disabled=true; $('#sendLink').textContent='Sending…';
+        const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
+        if(error){ toast(error.message); $('#sendLink').disabled=false; $('#sendLink').textContent='Send sign-in link'; }
+        else b.innerHTML=`<div class="acct">Check <span class="em">${esc(email)}</span> for your sign-in link. Open it on this device.</div>`;
+      };
+    } else {
+      b.innerHTML=`<div class="acct">Signed in as <span class="em">${esc(user.email||'')}</span> ${isPro?'<span class="pro">PRO</span>':''}<br>
+        ${isPro?'Unlimited topics · synced across your devices.':`Free plan: ${FREE_TOPICS} topics, saved on this device and synced.`}</div>
+        ${isPro?'':`<div class="upsell"><h3>PaperScroll Pro <span class="pro">${esc(cfg.PRO_PRICE_LABEL||'')}</span></h3>
+          <ul><li>Unlimited topics</li><li>Topics, saved papers and history synced across devices</li><li>Supports development</li></ul>
+          <a class="primary" href="${upgradeUrl()}" style="display:block;text-align:center;text-decoration:none;background:var(--accent);color:#06101f;font-weight:700;padding:11px;border-radius:12px">Upgrade to Pro</a>
+          <div class="hint">Already paid? <a href="#" id="recheck" style="color:var(--accent)">Refresh status</a></div></div>`}
+        <button id="signOut" style="margin-top:12px;width:100%">Sign out</button>`;
+      $('#signOut').onclick=async()=>{ await sb.auth.signOut(); user=null; isPro=false; acctSheet.classList.remove('open'); renderChips(); toast('Signed out'); };
+      const rc=$('#recheck'); if(rc) rc.onclick=async e=>{e.preventDefault(); await loadProfile(); openAccount(false); toast(isPro?'Pro active — thank you!':'Not upgraded yet');};
+    }
+    acctSheet.classList.add('open');
+  }
+
+  async function loadProfile(){
+    if(!sb||!user) return;
+    const {data}=await sb.from('profiles').select('is_pro').eq('user_id',user.id).maybeSingle();
+    isPro=!!(data&&data.is_pro);
+    renderLimit();
+  }
+  async function pullAndMerge(){
+    if(!sb||!user) return;
+    const {data}=await sb.from('user_data').select('topics,saved,seen,settings').eq('user_id',user.id).maybeSingle();
+    if(data){
+      const topics=[...(data.topics||[])]; for(const t of state.topics) if(!topics.includes(t)) topics.push(t);
+      state.topics=topics;
+      state.saved=Object.assign({},data.saved||{},state.saved);
+      state.seen=Object.assign({},data.seen||{},state.seen);
+      if(data.settings){ for(const k of ['sort','field','mix']) if(data.settings[k]) state[k]=data.settings[k]; }
+    }
+    SS('ps_state',state);
+    await pushNow();
+    renderChips(); resetFeed();
+  }
+  function schedulePush(){ if(!sb||!user) return; clearTimeout(pushTimer); pushTimer=setTimeout(pushNow,2000); }
+  async function pushNow(){
+    if(!sb||!user) return;
+    const seenKeys=Object.keys(state.seen); const seen=seenKeys.length>2000?Object.fromEntries(seenKeys.slice(-2000).map(k=>[k,1])):state.seen;
+    const {error}=await sb.from('user_data').upsert({user_id:user.id,topics:state.topics,saved:state.saved,seen,settings:{sort:state.sort,field:state.field,mix:state.mix},updated_at:new Date().toISOString()});
+    if(error) console.warn('sync',error.message);
+  }
+  async function initCloud(){
+    if(!cloudOn) return;
+    sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
+    const {data:{session}}=await sb.auth.getSession();
+    if(session){ user=session.user; await loadProfile(); await pullAndMerge(); }
+    sb.auth.onAuthStateChange(async(ev,sess)=>{
+      if(sess&&sess.user&&(!user||user.id!==sess.user.id)){ user=sess.user; await loadProfile(); await pullAndMerge(); toast('Signed in'); }
+      if(!sess){ user=null; isPro=false; }
+    });
+    if(location.hash==='#pro-success'){
+      history.replaceState(null,'',location.pathname);
+      for(let i=0;i<6&&!isPro;i++){ await new Promise(r=>setTimeout(r,2000)); await loadProfile(); }
+      toast(isPro?'Pro activated — thank you!':'Payment received; Pro will activate shortly.');
+    }
+  }
+
   // ---------- boot ----------
+  initCloud();
   save();renderChips();resetFeed();
 })();
 </script>
