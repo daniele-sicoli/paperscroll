@@ -20,6 +20,10 @@ Open the link in Safari or Chrome → Share → **Add to Home Screen**.
 
 It's a single `index.html` with no build step. Fork the repo, enable GitHub Pages (Settings → Pages → Source: GitHub Actions), and the included workflow deploys it.
 
+## Pro tier & accounts
+
+Optional sign-in, cross-device sync and a paid Pro tier (unlimited topics) run on Supabase + Stripe. See [SETUP.md](SETUP.md).
+
 ## License
 
 [MIT](LICENSE)
