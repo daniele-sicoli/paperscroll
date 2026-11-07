@@ -92,7 +92,7 @@
       <input id="newTopic" placeholder='e.g. thermosphere density, "SINDy", space weather'>
       <button class="primary" id="addTopic">Add</button>
     </div>
-    <div class="hint">Each topic is one search on OpenAlex (covers arXiv preprints and journals). Tips: put multi-word phrases in quotes, e.g. <code>"thermospheric density" AND machine learning</code>; use AND / OR / NOT between terms.</div>
+    <div class="hint">Each topic is one search on OpenAlex (covers arXiv preprints and journals). A multi-word topic is matched as an exact phrase. For boolean queries use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>.</div>
     <div class="topiclist" id="topicList"></div>
 
     <label>Sort</label>
@@ -104,9 +104,10 @@
 
     <label>Search in</label>
     <div class="seg" id="fieldSeg">
-      <button data-v="all" class="on">All fields</button>
+      <button data-v="all" class="on">Title + abstract</button>
       <button data-v="ti">Title only</button>
       <button data-v="abs">Abstract only</button>
+      <button data-v="full">Full text (loose)</button>
     </div>
 
     <label>Feed</label>
@@ -171,15 +172,29 @@
   const SORTS={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'};
   const PER=25;
 
+  const hasOps=t=>/"|\b(AND|OR|NOT)\b|[()]/.test(t);
+  // Multi-word topics become an exact phrase unless the user wrote their own boolean query.
+  function searchTerm(topic){ const t=topic.trim(); return (!hasOps(t)&&/\s/.test(t))?'"'+t+'"':t; }
+  const STOP=new Set(['the','and','for','with','from','into','using','based','of','in','on','a','an','to','via']);
+  const stem=w=>w.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,6);
+  // Client-side sanity check: every keyword (stemmed) must appear in title+abstract.
+  function relevant(p,topic){
+    if(hasOps(topic)) return true;
+    const hay=(p.title+' '+p.summary).toLowerCase();
+    const words=topic.toLowerCase().match(/[a-z0-9-]+/g)||[];
+    return words.filter(w=>w.length>2&&!STOP.has(w)).every(w=>hay.includes(stem(w)));
+  }
+
   async function fetchTopic(topic){
     if(exhausted[topic]) return [];
     const page=(cursors[topic]||0)+1;
-    const q=encodeURIComponent(topic);
-    const filters=['has_abstract:true'];
+    const term=searchTerm(topic);
+    const q=encodeURIComponent(term);
+    const today=new Date().toISOString().slice(0,10);
+    const filters=['has_abstract:true','to_publication_date:'+today,'type:article|preprint|review'];
+    const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':state.field==='full'?'fulltext.search':'title_and_abstract.search';
     let search='';
-    if(state.field==='ti') filters.push('title.search:'+q);
-    else if(state.field==='abs') filters.push('abstract.search:'+q);
-    else search='&search='+q;
+    if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
     const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,primary_topic,cited_by_count,type';
     const url=`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${SORTS[state.sort]||SORTS.submittedDate}&per-page=${PER}&page=${page}&select=${sel}`;
     const data=await getJSON(url);
@@ -216,7 +231,7 @@
       buffers[t]=buffers[t]||[];
       if(buffers[t].length<5 && !exhausted[t]){
         showLoader(`Searching “${t}”…`);
-        try{ const got=await fetchTopic(t); failures[t]=0; buffers[t].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id))); }
+        try{ const got=await fetchTopic(t); failures[t]=0; buffers[t].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
         catch(e){ console.warn(e); failures[t]=(failures[t]||0)+1; if(failures[t]>=2){ exhausted[t]=true; toast('Search failed for "'+t+'" — tap ↻ to retry'); } }
       }
       // interleave a few from each topic as soon as it's available
