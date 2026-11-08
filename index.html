@@ -157,6 +157,13 @@
     <input id="adsKey" type="password" placeholder="Paste your free ADS token" autocomplete="off">
     <div class="hint">Free: sign in at <a href="https://ui.adsabs.harvard.edu/user/settings/token" target="_blank" rel="noopener" style="color:var(--accent)">ui.adsabs.harvard.edu → Settings → API Token</a>. 5,000 queries/day. Stays on this device only.</div>
 
+    <label>Cloud voice (optional) — OpenAI API key</label>
+    <input id="ttsKey" type="password" placeholder="sk-… enables a natural voice that keeps playing with the screen locked" autocomplete="off">
+    <div class="row" style="margin-top:6px"><select id="ttsVoice" style="flex:1">
+      <option value="nova">Nova (warm, clear)</option><option value="alloy">Alloy (neutral)</option><option value="fable">Fable (expressive, British)</option><option value="onyx">Onyx (deep)</option><option value="shimmer">Shimmer (bright)</option><option value="echo">Echo (calm)</option><option value="coral">Coral</option><option value="sage">Sage</option><option value="ash">Ash</option><option value="ballad">Ballad</option>
+    </select></div>
+    <div class="hint">Uses OpenAI text-to-speech (model gpt-4o-mini-tts), billed to your key at roughly 1–2¢ per abstract. Unlike the phone's built-in voice, this audio keeps playing when the screen is locked and shows lock-screen controls. Get a key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style="color:var(--accent)">platform.openai.com</a>. Stays on this device only.</div>
+
     <label>OpenAlex API key (optional)</label>
     <input id="oaKey" type="password" placeholder="Paste your free key for 10× the daily search quota" autocomplete="off">
     <div class="hint">OpenAlex gives ~100 free searches/day per connection without a key, ~1,000 with a free account key from <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a>. The key stays on this device only.</div>
@@ -640,12 +647,60 @@
     });
     return plan;
   }
-  function stopSpeaking(){ speakSeq++; clearTimeout(speakTimer); try{speechSynthesis.cancel();}catch(e){} if(speakingEl){ const b=speakingEl.querySelector('.listen'); if(b) b.textContent='🔊 Listen'; } speakingEl=null; }
+  function stopSpeaking(){ speakSeq++; clearTimeout(speakTimer); ttsStop(); try{speechSynthesis.cancel();}catch(e){} if(speakingEl){ const b=speakingEl.querySelector('.listen'); if(b) b.textContent='🔊 Listen'; } speakingEl=null; }
   function pickVoice(){ const vs=speechSynthesis.getVoices(); return vs.find(v=>/en[-_](US|GB)/i.test(v.lang)&&/Siri|Samantha|Daniel|Ava|Zoe|Google (US|UK)|Natural|Premium|Enhanced/i.test(v.name))||vs.find(v=>/^en/i.test(v.lang))||null; }
+  // ---------- cloud voice (OpenAI TTS → real audio; survives screen lock, lock-screen controls) ----------
+  const ttsCache=new Map(); // paper id → Promise<blob URL>
+  let ttsAudio=null, ttsSeq=0, ttsPrefetching=null;
+  function cloudText(p){
+    const au=p.authors.length?(p.authors.length>3?p.authors.slice(0,3).join(', ')+', and colleagues':p.authors.join(', ')):'';
+    const venue=p.cat?(/arxiv/i.test(p.cat)?'A preprint on arXiv.':'Published in '+cleanSpeech(p.cat)+'.'):'';
+    return `${cleanSpeech(p.title)}.\n\n${au?'By '+au+(p.published?', '+p.published.slice(0,4):'')+'. ':''}${venue}\n\n${expandAbbr(cleanSpeech(p.summary))||'No abstract available.'}`;
+  }
+  function ttsFetch(p){
+    if(ttsCache.has(p.id)) return ttsCache.get(p.id);
+    const pr=(async()=>{
+      const res=await fetch('https://api.openai.com/v1/audio/speech',{method:'POST',headers:{'Authorization':'Bearer '+state.ttsKey,'Content-Type':'application/json'},
+        body:JSON.stringify({model:'gpt-4o-mini-tts',voice:state.ttsVoice||'nova',input:cloudText(p).slice(0,4000),response_format:'mp3',speed:1.0,
+          instructions:'You are narrating a research paper abstract for a science podcast. Speak clearly and engagingly at a measured pace. Pause briefly after the title and after the author list. Read acronyms letter by letter unless they are pronounceable. Say equations as "a formula".'})});
+      if(!res.ok){ let m=''; try{ m=(await res.json()).error?.message||''; }catch(e){} throw new Error('TTS '+res.status+(m?': '+m.slice(0,120):'')); }
+      const blob=await res.blob(); return URL.createObjectURL(blob);
+    })();
+    pr.catch(()=>ttsCache.delete(p.id));
+    ttsCache.set(p.id,pr);
+    if(ttsCache.size>30){ const k=ttsCache.keys().next().value; ttsCache.get(k).then(u=>URL.revokeObjectURL(u)).catch(()=>{}); ttsCache.delete(k); }
+    return pr;
+  }
+  function ttsPrefetchNext(el){ let nxt=el.nextElementSibling; while(nxt&&!nxt.classList.contains('card')) nxt=nxt.nextElementSibling; if(nxt&&nxt._paper&&!ttsCache.has(nxt._paper.id)) ttsFetch(nxt._paper).catch(()=>{}); }
+  function ttsStop(){ ttsSeq++; if(ttsAudio){ try{ ttsAudio.pause(); }catch(e){} } }
+  async function cloudSpeak(el,p){
+    const seq=++ttsSeq;
+    if(!ttsAudio){ ttsAudio=new Audio(); ttsAudio.setAttribute('playsinline',''); ttsAudio.preload='auto'; }
+    ttsAudio.onended=null; ttsAudio.onerror=null;
+    speakingEl=el; el.querySelector('.listen').textContent='⏹ Stop';
+    // Start playback inside the user's gesture when possible: play a tiny silent clip first so iOS
+    // grants the audio session, then swap in the real file when it arrives.
+    try{ if(!ttsAudio.src||ttsAudio.ended){ ttsAudio.src=silentClip(); const pr=ttsAudio.play(); if(pr&&pr.catch) pr.catch(()=>{}); } }catch(e){}
+    if(autoplay) setMediaSession(p);
+    let url;
+    try{ url=await ttsFetch(p); }catch(e){ if(seq!==ttsSeq) return; toast(e.message.includes('401')?'OpenAI rejected the API key — check it under Topics':'Cloud voice unavailable, using the phone voice'); console.warn(e); return deviceSpeak(el,p); }
+    if(seq!==ttsSeq) return;
+    ttsAudio.src=url;
+    ttsAudio.onended=()=>{ if(seq!==ttsSeq) return; if(autoplay) advanceAutoplay(el); else stopSpeaking(); };
+    ttsAudio.onerror=()=>{ if(seq!==ttsSeq) return; toast('Audio playback failed'); stopSpeaking(); };
+    try{ await ttsAudio.play(); }catch(e){ if(seq===ttsSeq){ toast('Tap ▶︎ again to start audio'); } }
+    if(autoplay) ttsPrefetchNext(el);
+  }
+  // 0.3 s of silence as a WAV data URL (only used to claim the audio session inside a tap).
+  const silentClip=(()=>{ let u=null; return ()=>{ if(u) return u; const rate=8000,n=rate*0.3|0,buf=new ArrayBuffer(44+n*2),v=new DataView(buf),str=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};
+    str(0,'RIFF');v.setUint32(4,36+n*2,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);str(36,'data');v.setUint32(40,n*2,true);
+    u=URL.createObjectURL(new Blob([buf],{type:'audio/wav'})); return u; }; })();
+
   // iOS swallows the first utterance after page load: prime the engine once on the first tap.
   let speechPrimed=false;
   function primeSpeech(){ if(speechPrimed||!('speechSynthesis' in window)) return; speechPrimed=true; try{ const u=new SpeechSynthesisUtterance(' '); u.volume=0; speechSynthesis.speak(u); speechSynthesis.cancel(); speechSynthesis.getVoices(); }catch(e){} }
-  function speak(el,p){
+  function speak(el,p){ if(state.ttsKey){ stopSpeaking(); return cloudSpeak(el,p); } return deviceSpeak(el,p); }
+  function deviceSpeak(el,p){
     primeSpeech();
     stopSpeaking();
     try{ speechSynthesis.resume(); }catch(e){}
@@ -689,8 +744,8 @@
   function initMediaSession(){
     if(!('mediaSession' in navigator)) return;
     const h=(a,f)=>{ try{ navigator.mediaSession.setActionHandler(a,f); }catch(e){} };
-    h('play',()=>{ if(!autoplay) setAutoplay(true); else if(speakingEl&&speakingEl._paper) speak(speakingEl,speakingEl._paper); });
-    h('pause',()=>setAutoplay(false));
+    h('play',()=>{ if(state.ttsKey&&ttsAudio&&ttsAudio.src&&ttsAudio.paused&&!ttsAudio.ended){ ttsAudio.play().catch(()=>{}); try{navigator.mediaSession.playbackState='playing';}catch(e){} return; } if(!autoplay) setAutoplay(true); else if(speakingEl&&speakingEl._paper) speak(speakingEl,speakingEl._paper); });
+    h('pause',()=>{ if(state.ttsKey&&ttsAudio&&!ttsAudio.paused){ ttsAudio.pause(); try{navigator.mediaSession.playbackState='paused';}catch(e){} return; } setAutoplay(false); });
     h('stop',()=>setAutoplay(false));
     h('nexttrack',()=>{ if(speakingEl) advanceAutoplay(speakingEl); else { const c=visibleCard(); if(c) advanceAutoplay(c); } });
     h('previoustrack',()=>{ const cur=speakingEl||visibleCard(); let prv=cur&&cur.previousElementSibling; while(prv&&!prv.classList.contains('card')) prv=prv.previousElementSibling; if(prv){ stopSpeaking(); autoScrolling=true; feed.scrollTo({top:prv.offsetTop,behavior:'smooth'}); setTimeout(()=>{autoScrolling=false; if(prv._paper) speak(prv,prv._paper);},700); } });
@@ -881,8 +936,8 @@
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
   function renderSrcSeg(){ const en=enabledSources(); [...$('#srcSeg').children].forEach(b=>{ b.classList.toggle('on',en.includes(b.dataset.v)); b.onclick=()=>{ let cur=enabledSources().slice(); if(cur.includes(b.dataset.v)){ if(cur.length===1){toast('Keep at least one source');return;} cur=cur.filter(x=>x!==b.dataset.v);} else { if(b.dataset.v==='ads'&&!($('#adsKey').value.trim()||state.adsKey)){ toast('Paste your NASA ADS token below first'); $('#adsKey').focus(); return; } cur.push(b.dataset.v); } state.sources=cur; save(); renderSrcSeg(); }; }); }
-  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';$('#adsKey').value=state.adsKey||'';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');sheet.classList.add('open');};
-  const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} const a=$('#adsKey').value.trim(); if(a!==(state.adsKey||'')){state.adsKey=a; SS('ps_state',state);} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
+  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';$('#adsKey').value=state.adsKey||'';$('#ttsKey').value=state.ttsKey||'';$('#ttsVoice').value=state.ttsVoice||'nova';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');sheet.classList.add('open');};
+  const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} const a=$('#adsKey').value.trim(); if(a!==(state.adsKey||'')){state.adsKey=a; SS('ps_state',state);} const tk=$('#ttsKey').value.trim(), tv=$('#ttsVoice').value; if(tk!==(state.ttsKey||'')||tv!==(state.ttsVoice||'nova')){state.ttsKey=tk; state.ttsVoice=tv; SS('ps_state',state); ttsCache.clear();} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
   $('#closeSheet').onclick=closeSheet;
   sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
   $('#clearSeen').onclick=()=>{state.seen={};save();toast('Seen history cleared');};
