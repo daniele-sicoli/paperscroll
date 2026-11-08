@@ -145,7 +145,8 @@
     <input id="oaKey" type="password" placeholder="Paste your free key for 10× the daily search quota" autocomplete="off">
     <div class="hint">OpenAlex gives ~100 free searches/day per connection without a key, ~1,000 with a free account key from <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a>. The key stays on this device only.</div>
 
-    <div class="row" style="margin-top:18px">
+    <div class="hint" style="margin-top:14px;text-align:center">PaperScroll build <span id="buildId">dev</span> · <a href="https://github.com/daniele-sicoli/paperscroll" target="_blank" rel="noopener" style="color:var(--accent)">open source</a></div>
+    <div class="row" style="margin-top:10px">
       <button id="clearSeen" style="flex:1">Reset "seen" history</button>
       <button class="primary" id="closeSheet" style="flex:1">Done</button>
     </div>
@@ -805,6 +806,7 @@
   document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') checkUpdate(); });
 
   // ---------- boot ----------
+  $('#buildId').textContent=BUILD&&BUILD!=='__BUILD__'?BUILD:'dev';
   checkUpdate();
   initCloud();
   save();renderChips();resetFeed();
