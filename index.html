@@ -189,7 +189,7 @@
   const nextResetUTC=()=>{const d=new Date();return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()+1)};
   const CACHE_TTL=3*3600*1000;
   const cacheGet=k=>{try{const v=JSON.parse(localStorage.getItem('oa:'+k));return v&&Date.now()-v.t<CACHE_TTL?v.d:null}catch(e){return null}};
-  const cachePut=(k,d)=>{try{localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}))}catch(e){/* full: drop oldest */ try{Object.keys(localStorage).filter(x=>x.startsWith('oa:')).slice(0,20).forEach(x=>localStorage.removeItem(x))}catch(_){}}};
+  const cachePut=(k,d)=>{try{localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}))}catch(e){/* storage full: drop the page cache and retry once */ try{Object.keys(localStorage).filter(x=>x.startsWith('oa:')).forEach(x=>localStorage.removeItem(x)); localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}));}catch(_){}}};
   class QuotaError extends Error{constructor(){super('quota');this.quota=true}}
   async function getJSON(url,opts={}){
     const key=url.replace(/[?&]api_key=[^&]*/,'');
@@ -409,7 +409,7 @@
 
   // A selected chip shows only that topic; "All" shows every topic interleaved.
   function activeTopics(){ return mode==='saved'?[]:(state.active&&state.topics.includes(state.active)?[state.active]:state.topics); }
-  const shown=new Set(), shownKeys=new Set(); let failures={};
+  const shown=new Set(), shownKeys=new Set(); let failures={}, lastError=null;
   const allExhausted=()=>activeTopics().every(t=>enabledSources().every(src=>exhausted[streamKey(t,src)]));
 
   // Fetch every topic × source in parallel; hand papers to onItems as each stream answers.
@@ -417,15 +417,15 @@
     const topics=activeTopics(), srcs=enabledSources();
     if(!topics.length||!srcs.length) return 0;
     const streams=[]; for(const t of topics) for(const src of srcs) streams.push([t,src]);
-    let total=0, pending=streams.length;
+    let total=0, pending=streams.length; lastError=null;
     const label=()=>showLoader(`Searching ${topics.length} topic${topics.length>1?'s':''} on ${srcs.length} source${srcs.length>1?'s':''}… (${pending} left)`);
     label();
     await Promise.all(streams.map(async([t,src])=>{
       const k=streamKey(t,src); buffers[k]=buffers[k]||[];
-      for(let hop=0; hop<2 && buffers[k].length<4 && !exhausted[k]; hop++){
+      for(let hop=0; hop<8 && buffers[k].length<4 && !exhausted[k]; hop++){
         try{ const got=await fetchStream(t,src); failures[k]=0;
           buffers[k].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
-        catch(e){ console.warn(src,e); if(e.quota){ exhausted[k]=true; break; } failures[k]=(failures[k]||0)+1; if(failures[k]>=2){ exhausted[k]=true; } break; }
+        catch(e){ console.warn(src,e); lastError=e; if(e.quota){ exhausted[k]=true; break; } failures[k]=(failures[k]||0)+1; if(failures[k]>=2){ exhausted[k]=true; } break; }
       }
       const out=[]; let n=0;
       while(n<4 && buffers[k].length){ const p=buffers[k].shift(); const dk=dedupKey(p); if(!shown.has(p.id)&&!shownKeys.has(dk)){ shown.add(p.id); shownKeys.add(dk); out.push(p); n++; } }
@@ -436,6 +436,10 @@
     return total;
   }
 
+  function caughtUpMsg(){
+    const n=Object.keys(state.seen).length;
+    return `<div class="empty">You're caught up — you've already seen the ${n} most recent papers for these topics.<br><br><button id="resetSeenInline" class="primary">Show them again</button><br><br>Or add a new topic, or switch sort to <b>Most cited</b>.</div>`;
+  }
   function quotaMsg(){
     const t=new Date(quotaHit).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
     return `<div class="empty">OpenAlex's free daily quota is used up (resets at <b>${t}</b>); other sources are still searched.<br><br>Want 10× more? Get a free key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
@@ -487,7 +491,8 @@
         if(!feed.querySelector('.card')){
           feed.innerHTML=mode==='saved'
             ?`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`
-            :(quotaHit&&Date.now()<quotaHit?quotaMsg():allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:`<div class="empty">Couldn't load papers right now.<br>Tap <b>↻</b> to try again.</div>`);
+            :(quotaHit&&Date.now()<quotaHit?quotaMsg():allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:lastError?`<div class="empty">Couldn't reach the paper databases right now.<br>Tap <b>↻</b> to try again in a moment.</div>`:caughtUpMsg());
+          const rs=$('#resetSeenInline'); if(rs) rs.onclick=()=>{state.seen={};save();toast('Seen history cleared');resetFeed();};
         } else if(mode!=='saved' && quotaHit&&Date.now()<quotaHit && !feed.querySelector('.end')){
           const d=document.createElement('div');d.className='empty end';d.innerHTML=quotaMsg();feed.appendChild(d);
         } else if(mode!=='saved' && allDone && !feed.querySelector('.end')){
