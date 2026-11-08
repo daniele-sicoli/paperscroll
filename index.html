@@ -124,11 +124,6 @@
     </div>
     <div class="hint">OpenAlex and Crossref cover all fields; Semantic Scholar is strongest in CS, physics and engineering; Europe PMC is life sciences and medicine. Duplicates across sources are merged.</div>
 
-    <label>Feed</label>
-    <div class="seg" id="mixSeg">
-      <button data-v="mix" class="on">Shuffle topics together</button>
-      <button data-v="one">One topic at a time</button>
-    </div>
 
     <label>OpenAlex API key (optional)</label>
     <input id="oaKey" type="password" placeholder="Paste your free key for 10× the daily search quota" autocomplete="off">
@@ -240,6 +235,12 @@
   // in the title or abstract, so "density of the thermosphere" passes but scattered matches don't.
   function relevant(p,topic){
     const pt=parseTopic(topic);
+    if(pt.kind==='author'){
+      // Other sources match author names loosely: require the surname (last token) in the author list.
+      const toks=pt.name.toLowerCase().split(/\s+/).filter(Boolean); const sur=toks[toks.length-1];
+      const al=(p.authors||[]).join(' | ').toLowerCase();
+      if(sur&&!al.includes(sur)) return false;
+    }
     if(pt.kind){ if(!pt.kw) return true; topic=pt.kw; }
     if(hasOps(topic)) return true;
     const ks=[...new Set(keywords(topic).map(stem))];
@@ -406,7 +407,8 @@
     return items.map(p=>Object.assign(p,{topic:t}));
   }
 
-  function activeTopics(){ return mode==='saved'?[]:(state.mix==='one'&&state.active?[state.active]:(state.active?[state.active,...state.topics.filter(t=>t!==state.active)]:state.topics)); }
+  // A selected chip shows only that topic; "All" shows every topic interleaved.
+  function activeTopics(){ return mode==='saved'?[]:(state.active&&state.topics.includes(state.active)?[state.active]:state.topics); }
   const shown=new Set(), shownKeys=new Set(); let failures={};
   const allExhausted=()=>activeTopics().every(t=>enabledSources().every(src=>exhausted[streamKey(t,src)]));
 
@@ -559,7 +561,7 @@
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
   function renderSrcSeg(){ const en=enabledSources(); [...$('#srcSeg').children].forEach(b=>{ b.classList.toggle('on',en.includes(b.dataset.v)); b.onclick=()=>{ let cur=enabledSources().slice(); if(cur.includes(b.dataset.v)){ if(cur.length===1){toast('Keep at least one source');return;} cur=cur.filter(x=>x!==b.dataset.v);} else cur.push(b.dataset.v); state.sources=cur; save(); renderSrcSeg(); }; }); }
-  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');seg('#mixSeg','mix');sheet.classList.add('open');};
+  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');sheet.classList.add('open');};
   const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
   $('#closeSheet').onclick=closeSheet;
   sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
