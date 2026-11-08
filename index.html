@@ -634,7 +634,7 @@
   function speechPlan(p){
     const plan=[]; // {text, rate, pitch, pauseAfter(ms)}
     const au=p.authors.length?(p.authors.length>3?p.authors.slice(0,3).join(', ')+', and colleagues':p.authors.join(', ')):'';
-    plan.push({text:cleanSpeech(p.title),rate:0.88,pitch:0.95,pause:700});          // title: slow, slightly low, long pause
+    plan.push({text:cleanSpeech(p.title),rate:0.85,pitch:0.92,pause:800});          // title: slow, slightly low, long pause
     if(au) plan.push({text:'By '+au+(p.published?', '+p.published.slice(0,4):'')+'.',rate:0.95,pitch:1.0,pause:900});
     if(p.cat) plan.push({text:(/arxiv/i.test(p.cat)?'A preprint on arXiv.':'Published in '+cleanSpeech(p.cat)+'.'),rate:0.95,pitch:0.97,pause:900});
     const body=expandAbbr(cleanSpeech(p.summary))||'No abstract available.';
@@ -644,8 +644,8 @@
       const first=i===0, last=i===sents.length-1;
       const pivot=/^(however|here|in this (work|paper|study)|we (show|find|demonstrate|propose|present|introduce)|our results|these results|this (work|paper|study)|finally|importantly|notably|surprisingly|in contrast|crucially)/i.test(t);
       const question=/\?$/.test(t), colon=/[:;]$/.test(t);
-      let rate=0.97+(t.length>180?-0.03:0)+(t.length<60?0.03:0);
-      let pitch=1.0+(pivot?0.06:0)+(question?0.08:0)+(first?0.02:0)+(last?-0.04:0);
+      let rate=0.92+(t.length>180?-0.03:0)+(t.length<60?0.03:0);
+      let pitch=0.95+(pivot?0.05:0)+(question?0.07:0)+(first?0.02:0)+(last?-0.04:0);
       let pause=colon?250:(last?600:(pivot?500:380));
       if(pivot) pause+=150;                                   // breath before a turning point
       plan.push({text:t,rate,pitch,pause});
@@ -653,7 +653,11 @@
     return plan;
   }
   function stopSpeaking(){ speakSeq++; clearTimeout(speakTimer); ttsStop(); try{speechSynthesis.cancel();}catch(e){} if(speakingEl){ const b=speakingEl.querySelector('.listen'); if(b) b.textContent='🔊 Listen'; } speakingEl=null; }
-  function pickVoice(){ const vs=speechSynthesis.getVoices(); if(state.speechVoice){ const v=vs.find(v=>v.name===state.speechVoice); if(v) return v; } return vs.find(v=>/en[-_](US|GB)/i.test(v.lang)&&/Siri|Samantha|Daniel|Ava|Zoe|Google (US|UK)|Natural|Premium|Enhanced/i.test(v.name))||vs.find(v=>/^en/i.test(v.lang))||null; }
+  function pickVoice(){ const vs=speechSynthesis.getVoices(); if(state.speechVoice){ const v=vs.find(v=>v.name===state.speechVoice); if(v) return v; } const en=vs.filter(v=>/^en/i.test(v.lang));
+    // Gentle defaults: warm voices first, enhanced/premium builds preferred.
+    const prefer=[/Ava.*(Premium|Enhanced)/i,/Zoe.*(Premium|Enhanced)/i,/Samantha.*(Enhanced|Premium)/i,/Nicky.*(Enhanced|Premium)/i,/Allison.*(Enhanced|Premium)/i,/Siri.*Voice [1-5]/i,/Ava|Zoe|Samantha|Nicky|Allison|Susan|Karen|Moira|Martha|Serena/i,/Google US English|Google UK English Female/i,/Natural|Premium|Enhanced/i];
+    for(const re of prefer){ const v=en.find(v=>re.test(v.name)); if(v) return v; }
+    return en[0]||null; }
   // ---------- cloud voice (OpenAI TTS → real audio; survives screen lock, lock-screen controls) ----------
   const ttsCache=new Map(); // paper id → Promise<blob URL>
   let ttsAudio=null, ttsSeq=0, ttsPrefetching=null;
