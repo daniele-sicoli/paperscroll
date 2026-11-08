@@ -366,17 +366,19 @@
         const sort={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'}[sortMode()];
         const sel='id,doi,title,display_name,publication_date,authorships,primary_location,best_oa_location,open_access,abstract_inverted_index,cited_by_count,type';
         const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
-        const run=(fl,srch)=>getJSON(`https://api.openalex.org/works?filter=${fl.join(',')}${srch||''}&sort=${sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
+        const run=(fl,srch,srt)=>getJSON(`https://api.openalex.org/works?filter=${fl.join(',')}${srch||''}&sort=${srt||sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
         let results=[];
         if(quick&&pt.kw&&!hasOps(pt.kw)){
           // Google-style: words may be text terms or author names. Try the whole query as text, and (page 1 only)
           // each word as an author surname with the remaining words as text. Merge, de-duplicate.
           const words=keywords(pt.kw);
           const variants=[run(filters,'&search='+encodeURIComponent(pt.kw))];
-          if(page===1&&words.length>=2&&words.length<=4) for(const w of words){
-            const rest=words.filter(x=>x!==w);
-            variants.push(run([...filters,'raw_author_name.search:'+encodeURIComponent(w),...(rest.length?['title_and_abstract.search:'+encodeURIComponent(rest.join(' '))]:[])]));
-          } else if(page===1&&words.length===1) variants.push(run([...filters,'raw_author_name.search:'+encodeURIComponent(words[0])]));
+          // Each word as an author surname, with NO text constraint: the client-side match then requires the
+          // other words by prefix, so "sindy" also finds "SINDYc" and "SINDy-AR", which OpenAlex's exact-token search would miss.
+          if(page===1&&words.length<=4) for(const w of words){
+            if(w.length<3) continue;
+            variants.push(run([...filters,'raw_author_name.search:'+encodeURIComponent(w)],'','publication_date:desc'));
+          }
           const sets=await Promise.all(variants.map(v=>v.catch(e=>{console.warn(e);return {};})));
           const seen=new Set(); for(const d of sets) for(const w of (d.results||[])) if(!seen.has(w.id)){ seen.add(w.id); results.push(w); }
           if(!sets.some(d=>d.results)) throw new Error('OpenAlex search failed');
