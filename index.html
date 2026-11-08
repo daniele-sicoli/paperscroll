@@ -823,10 +823,10 @@
         <div class="sub">Each row is a research thread; shading = papers per year since ${Y0}. Ordered by when the thread emerged. Tap to follow.</div>
         <div class="map">${mapRows.map(r=>`<div class="r" data-k="${lineKind}" data-n="${esc(r.name)}"><div class="l">${esc(r.name)}<small>since ${r.emerge} · peak ${r.peak} · ${fmtN(r.n)} papers${growth(r)}</small></div><div class="s">${r.counts.map(c=>`<i style="opacity:${c?(0.15+0.85*c/r.max).toFixed(2):0.04}"></i>`).join('')}</div></div>`).join('')}
           <div class="ax"><span>${Y0}</span><span>${Y0+10}</span><span>${Y0+20}</span><span>${y}</span></div></div>
-        <h3>Lines of work · research threads in this field</h3>
+        <h3>Established lines of work · research threads in this field</h3>
         <div class="sub">${useKw?'Keyword-level threads (the field maps mostly to one OpenAlex topic)':'OpenAlex research topics'} · 🔥×N = recent share N× the field average (lines with ≥15 recent papers) · tap to follow</div>
         <div class="who">${lines.map(l=>`<button data-k="${lineKind}" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${fmtN(l.n)} papers · ${fmtN(l.r)} since ${y-2}${growth(l)}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
-        <h3>Emerging terms · new jargon in the latest papers</h3>
+        <h3>Emerging lines of work · new terms in the latest papers</h3>
         <div class="sub">Acronyms and phrases frequent in the ${emerging.nRec} newest abstracts (since ${y-1}) but rare in ${emerging.nOld} highly-cited ones from ${y-9}–${y-5}. Tap to add as a topic.</div>
         <div class="who">${emerging.acr.map(x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`).join('')}${emerging.grams.map(x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
         <h3>Rising · most cited since ${y-2}</h3>${risingL.map(paperRow).join('')||'<div class="sub">—</div>'}
