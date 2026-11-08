@@ -732,8 +732,24 @@
   let autoplay=false;
   // Ask iOS for the 'playback' audio session (Safari 16.4+): the supported way to be treated as a media
   // player. NOTE: a silent <audio> track must NOT be used here — on iOS it demotes Web Speech to silence.
-  function bgStart(){ try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){} }
-  function bgStop(){ try{ if(navigator.audioSession) navigator.audioSession.type='auto'; }catch(e){} }
+  let bgAudio=null;
+  function silentWav(seconds=3,rate=8000){
+    const n=seconds*rate, buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
+    const str=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};
+    str(0,'RIFF'); v.setUint32(4,36+n*2,true); str(8,'WAVE'); str(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+    v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); str(36,'data'); v.setUint32(40,n*2,true);
+    return URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));
+  }
+  // A silent looping track keeps the page registered as a media player (Now Playing on the lock screen,
+  // page stays alive in the background). Speech is started a moment later so the session change doesn't swallow it.
+  function bgStart(){
+    try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
+    try{
+      if(!bgAudio){ bgAudio=new Audio(silentWav()); bgAudio.loop=true; bgAudio.setAttribute('playsinline',''); }
+      const pr=bgAudio.play(); if(pr&&pr.catch) pr.catch(()=>{});
+    }catch(e){}
+  }
+  function bgStop(){ try{ bgAudio&&bgAudio.pause(); }catch(e){} try{ if(navigator.audioSession) navigator.audioSession.type='auto'; }catch(e){} }
   function setMediaSession(p){
     if(!('mediaSession' in navigator)) return;
     try{
@@ -759,8 +775,8 @@
   function releaseWake(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
   function setAutoplay(on){
     autoplay=on; btnPlay.textContent=on?'⏸':'▶︎'; btnPlay.style.background=on?'var(--accent)':''; btnPlay.style.color=on?'#06101f':'';
-    if(on){ holdWake(); bgStart(); } else { releaseWake(); bgStop(); try{ if('mediaSession' in navigator) navigator.mediaSession.playbackState='paused'; }catch(e){} }
-    if(on){ const c=visibleCard(); if(c&&c._paper) speak(c,c._paper); else toast('Nothing to read yet'); }
+    if(on){ holdWake(); bgStart(); primeSpeech(); } else { releaseWake(); bgStop(); try{ if('mediaSession' in navigator) navigator.mediaSession.playbackState='paused'; }catch(e){} }
+    if(on){ const c=visibleCard(); if(c&&c._paper) setTimeout(()=>{ if(autoplay) speak(c,c._paper); },400); else toast('Nothing to read yet'); }
     else stopSpeaking();
   }
   btnPlay.onclick=()=>{ if(!('speechSynthesis' in window)) return toast('Speech not available in this browser'); setAutoplay(!autoplay); };
