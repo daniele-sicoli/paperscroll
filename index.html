@@ -84,6 +84,7 @@
     <button class="primary" id="btnTopics">Topics</button>
   </div>
   <div class="chips" id="chips"></div>
+  <div id="savedBar" style="display:none"></div>
 </header>
 
 <div id="feed"></div>
@@ -462,8 +463,8 @@
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
   }
   function savedToolbar(list){
-    const d=document.createElement('div'); d.className='row'; d.style.cssText='padding:12px 14px 0;gap:8px;flex-wrap:wrap';
-    d.innerHTML=`<button id="expBib" ${list.length?'':'disabled'}>Copy BibTeX</button><button id="expJson" ${list.length?'':'disabled'}>Export backup</button><button id="impJson">Import backup</button><input id="impFile" type="file" accept=".json,application/json" style="display:none">`;
+    const d=document.createElement('div'); d.className='row'; d.style.cssText='padding:8px 0 2px;gap:8px;flex-wrap:wrap';
+    d.innerHTML=`<button id="expBib" style="font-size:13px" ${list.length?'':'disabled'}>Copy BibTeX</button><button id="expJson" style="font-size:13px" ${list.length?'':'disabled'}>Export backup</button><button id="impJson" style="font-size:13px">Import backup</button><input id="impFile" type="file" accept=".json,application/json" style="display:none">`;
     d.querySelector('#expBib').onclick=()=>{ const bib=toBibTeX(list); (navigator.clipboard?.writeText(bib)||Promise.reject()).then(()=>toast(`Copied ${list.length} entries — in Zotero: File → Import from Clipboard`)).catch(()=>shareOrDownload('paperscroll.bib',bib,'application/x-bibtex')); };
     d.querySelector('#expJson').onclick=()=>shareOrDownload(`paperscroll-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify({version:1,exported:new Date().toISOString(),topics:state.topics,saved:state.saved,settings:{sort:state.sort,field:state.field,sources:state.sources}},null,1),'application/json');
     const inp=d.querySelector('#impFile');
@@ -543,10 +544,10 @@
     cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
     if(mode==='saved'){
       const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
-      feed.appendChild(savedToolbar(list));
+      const bar=$('#savedBar'); bar.innerHTML=''; bar.appendChild(savedToolbar(list)); bar.style.display='';
       if(!list.length){ const d=document.createElement('div'); d.className='empty'; d.innerHTML='No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.'; feed.appendChild(d); }
       list.forEach(p=>feed.appendChild(card(p)));
-    } else loadMore();
+    } else { $('#savedBar').style.display='none'; loadMore(); }
   }
 
   // infinite scroll + mark seen
