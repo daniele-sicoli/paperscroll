@@ -682,16 +682,19 @@
       const base=await oaTopicFilters(topic);
       const sel='id,doi,display_name,title,publication_date,authorships,primary_location,cited_by_count';
       const y=new Date().getFullYear();
+      // Each section is independent: a failing query shows as "—" instead of killing the whole view.
+      const soft=p=>p.then(v=>v,e=>{ if(e.quota) throw e; console.warn('landscape',e); errs.push(e.message||String(e)); return {}; });
+      const errs=[];
       const [found,rising,reviews]=await Promise.all([
-        oaList(base,`sort=cited_by_count:desc&per-page=8&select=${sel}`),
-        oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=8&select=${sel}`),
-        oaList([...base,'type:review'],`sort=publication_date:desc&per-page=6&select=${sel}`)
+        soft(oaList(base,`sort=cited_by_count:desc&per-page=8&select=${sel}`)),
+        soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=8&select=${sel}`)),
+        soft(oaList([...base,'type:review'],`sort=publication_date:desc&per-page=6&select=${sel}`))
       ]);
       const [authors,insts,years,kws]=await Promise.all([
-        oaList(base,`group_by=authorships.author.id&per-page=12`),
-        oaList(base,`group_by=authorships.institutions.id&per-page=10`),
-        oaList([...base,`from_publication_year:${y-14}`],`group_by=publication_year&per-page=20`),
-        oaList(base,`group_by=keywords.id&per-page=14`)
+        soft(oaList(base,`group_by=authorships.author.id`)),
+        soft(oaList(base,`group_by=authorships.institutions.id`)),
+        soft(oaList([...base,`publication_year:>${y-15}`],`group_by=publication_year`)),
+        soft(oaList(base,`group_by=keywords.id`))
       ]);
       const total=(found.meta&&found.meta.count)||0;
       const yrs=(years.group_by||[]).map(g=>({y:+g.key,n:g.count})).filter(g=>g.y>=y-14&&g.y<=y).sort((a,b)=>a.y-b.y);
@@ -701,7 +704,7 @@
       const inst=(insts.group_by||[]).filter(g=>g.key_display_name).slice(0,8);
       const kw=(kws.group_by||[]).filter(g=>g.key_display_name&&!(pt.kw||'').toLowerCase().includes(g.key_display_name.toLowerCase())).slice(0,12);
       b.innerHTML=`
-        <div class="sub">${total.toLocaleString()} papers indexed on OpenAlex${pt.kind?'':' matching this topic'}</div>
+        <div class="sub">${total?total.toLocaleString()+' papers indexed on OpenAlex'+(pt.kind?'':' matching this topic'):''}${errs.length?`<br><span style="opacity:.7">Some sections unavailable: ${esc(errs[0])}</span>`:''}</div>
         <h3>Trend · papers per year</h3>
         <div class="trend">${yrs.map(g=>`<div style="height:${Math.round(100*g.n/max)}%" title="${g.y}: ${g.n}"><i>${String(g.y).slice(2)}</i></div>`).join('')}</div>
         <div style="height:14px"></div>
