@@ -704,7 +704,7 @@
   $('#btnLand').onclick=()=>{ if(state.active&&state.topics.includes(state.active)) openLandscape(state.active); else toast('Select a topic chip first, then tap 📊'); };
 
   async function oaTopicFilters(topic){
-    const pt=parseTopic(topic); const f=[];
+    const pt=parseTopic(topic); const f=['type:article|preprint|review','to_publication_date:'+today()];
     if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); f.push(KINDS[pt.kind].oaFilter+':'+e.id); }
     if(pt.kw) f.push('title_and_abstract.search:'+encodeURIComponent(searchTerm(pt.kw)));
     return f;
@@ -719,7 +719,7 @@
   function followBtn(kind,name,count,label){ return `<button data-k="${kind}" data-n="${esc(name)}"><b>${esc(name)}</b><span>${count} ${label}</span></button>`; }
 
   const GEN_ACR=new Set(['DOI','USA','UK','EU','ESA','NASA','NOAA','IEEE','AGU','PDF','HTML','API','ISSN','ET','AL','CC','BY','AND','THE','FOR','WITH',
-    'UTC','UT','LT','RMSE','MAE','MAPE','MSE','PCA','STD','SNR','CPU','GPU','MIT','JPL','CNN','RNN','LSTM','ANN','GAN','SVM','AI','ML','DL','NN','IQR','CI','PDF','CDF','FFT','ODE','PDE','SI','USD','GB','MB','KM','AM','PM','NaN','ID','IDs','MDPI','ORCID','CRediT']);
+    'UTC','UT','LT','RMSE','MAE','MAPE','MSE','PCA','STD','SNR','CPU','GPU','MIT','JPL','CNN','RNN','LSTM','ANN','GAN','SVM','AI','ML','DL','NN','IQR','CI','PDF','CDF','FFT','ODE','PDE','SI','USD','GB','MB','KM','AM','PM','NaN','ID','IDs','MDPI','ORCID','CREDIT','README','GITHUB','PYTHON','MATLAB','GIS','CSV','JSON','HDF5','NETCDF','ZENODO','FIGSHARE','URL','HTTP','HTTPS','WWW','FAIR','OPEN','CODE','DATA','FIG','TABLE','EQ','SEC']);
   function emergingTerms(recDocs,oldDocs,topic){
     const topicWords=new Set(keywords(topic).map(stem));
     const df=(docs,extract)=>{ const m=new Map(); for(const d of docs){ const seen=new Set(extract(d)); for(const t of seen) m.set(t,(m.get(t)||0)+1);} return m; };
