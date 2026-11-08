@@ -12,7 +12,7 @@ A phone-friendly feed for doomscrolling research papers on the topics you care a
 - Follow journals, authors or institutions: `journal:Nature`, `author:Daniele Sicoli`, `institution:MIT`, or filter inside one with `journal:Nature | space weather`.
 - **Landscape** (📊): for any topic, a one-screen map of the field — publication trend, most-cited papers of all time and of the last 3 years, recent reviews, leading authors and institutions (tap to follow), and related keywords (tap to add).
 - Sort by newest, most cited, or relevance.
-- 🔊 Listen reads the abstract aloud with the phone's voice; 🎧 Full paper sends the PDF to a reader app of your choice (ElevenLabs Reader, Speechify, NotebookLM…) via the share sheet.
+- ▶︎ Play all reads abstracts one after another, advancing the feed like a podcast; swipe to skip. 🔊 Listen reads the abstract aloud with the phone's voice; 🎧 Full paper sends the PDF to a reader app of your choice (ElevenLabs Reader, Speechify, NotebookLM…) via the share sheet.
 - Infinite scroll, skips what you've already seen, and a saved list — all stored locally in your browser. Export saved papers as BibTeX (for Zotero) or as a JSON backup you can import on another device. Nothing is sent anywhere except the search queries to OpenAlex.
 
 ## OpenAlex quota

@@ -98,6 +98,7 @@
 <header>
   <div class="row">
     <h1>Paper<span>Scroll</span></h1>
+    <button class="icon" id="btnPlay" title="Play all: read abstracts one after another">▶︎</button>
     <button class="icon" id="btnLand" title="Landscape">📊</button>
     <button class="icon" id="btnAccount" title="Account">👤</button>
     <button class="icon" id="btnSaved" title="Saved">🔖</button>
@@ -648,7 +649,7 @@
     let i=0;
     const next=()=>{
       if(seq!==speakSeq) return;
-      if(i>=plan.length){ stopSpeaking(); return; }
+      if(i>=plan.length){ if(autoplay){ advanceAutoplay(el); } else stopSpeaking(); return; }
       const step=plan[i++];
       const u=new SpeechSynthesisUtterance(step.text); u.lang='en-US'; u.rate=step.rate; u.pitch=step.pitch; if(voice) u.voice=voice;
       u.onend=()=>{ if(seq===speakSeq) speakTimer=setTimeout(next,step.pause); };
@@ -659,12 +660,35 @@
     if(!voice&&speechSynthesis.getVoices().length===0){ speechSynthesis.onvoiceschanged=()=>{ speechSynthesis.onvoiceschanged=null; if(seq===speakSeq) next(); }; speakTimer=setTimeout(()=>{ if(seq===speakSeq&&i===0) next(); },400); }
     else next();
   }
+  // ---------- play all ----------
+  let autoplay=false;
+  const btnPlay=$('#btnPlay');
+  const visibleCard=()=>{ const cards=[...feed.querySelectorAll('.card')]; const top=feed.scrollTop; let best=null,bd=1e9; for(const c of cards){ const d=Math.abs(c.offsetTop-top); if(d<bd){bd=d;best=c;} } return best; };
+  function setAutoplay(on){
+    autoplay=on; btnPlay.textContent=on?'⏸':'▶︎'; btnPlay.style.background=on?'var(--accent)':''; btnPlay.style.color=on?'#06101f':'';
+    if(on){ const c=visibleCard(); if(c&&c._paper) speak(c,c._paper); else toast('Nothing to read yet'); }
+    else stopSpeaking();
+  }
+  btnPlay.onclick=()=>{ if(!('speechSynthesis' in window)) return toast('Speech not available in this browser'); setAutoplay(!autoplay); };
+  async function advanceAutoplay(fromEl){
+    stopSpeaking();
+    let nxt=fromEl.nextElementSibling; while(nxt&&!nxt.classList.contains('card')) nxt=nxt.nextElementSibling;
+    if(!nxt){ loadMore(); for(let i=0;i<40&&autoplay;i++){ await new Promise(r=>setTimeout(r,250)); nxt=fromEl.nextElementSibling; while(nxt&&!nxt.classList.contains('card')) nxt=nxt.nextElementSibling; if(nxt) break; } }
+    if(!autoplay) return;
+    if(!nxt){ toast('End of feed'); setAutoplay(false); return; }
+    autoScrolling=true; feed.scrollTo({top:nxt.offsetTop,behavior:'smooth'});
+    setTimeout(()=>{ autoScrolling=false; if(autoplay&&nxt._paper) speak(nxt,nxt._paper); },700);
+  }
+  // User swipes while playing: read the card they landed on.
+  let autoScrolling=false, swipeT=null;
+  feed.addEventListener('scroll',()=>{ if(!autoplay||autoScrolling) return; clearTimeout(swipeT); swipeT=setTimeout(()=>{ const c=visibleCard(); if(c&&c!==speakingEl&&c._paper) speak(c,c._paper); },350); },{passive:true});
+
   // stop when the card leaves the screen or the user navigates away
-  document.addEventListener('visibilitychange',()=>{ if(document.hidden) stopSpeaking(); });
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden){ if(autoplay) setAutoplay(false); else stopSpeaking(); } });
 
   // ---------- render ----------
   function card(p){
-    const el=document.createElement('article'); el.className='card'; el.dataset.id=p.id;
+    const el=document.createElement('article'); el.className='card'; el.dataset.id=p.id; el._paper=p;
     const isSaved=!!state.saved[p.id];
     const auth=p.authors.length>6?p.authors.slice(0,6).join(', ')+' … (+'+(p.authors.length-6)+')':p.authors.join(', ');
     el.innerHTML=`
@@ -738,7 +762,7 @@
   }
 
   function resetFeed(){
-    stopSpeaking(); gen++; loadingGen=-1; cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
+    if(autoplay) setAutoplay(false); stopSpeaking(); gen++; loadingGen=-1; cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
     if(mode==='saved'){
       const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
       const bar=$('#savedBar'); bar.innerHTML=''; bar.appendChild(savedToolbar(list)); bar.style.display='';
@@ -756,7 +780,7 @@
     if(e.isIntersecting && e.intersectionRatio>.6){
       clearTimeout(el._seenT);
       el._seenT=setTimeout(()=>{ if(mode==='search') return; const id=el.dataset.id; if(id&&!state.seen[id]){state.seen[id]=1; if(Object.keys(state.seen).length>3000){state.seen={};} save();} },1500);
-    } else { clearTimeout(el._seenT); if(speakingEl===el&&e.intersectionRatio===0) stopSpeaking(); }
+    } else { clearTimeout(el._seenT); if(speakingEl===el&&e.intersectionRatio===0&&!autoplay) stopSpeaking(); }
   }),{root:feed,threshold:[0,.6]});
   new MutationObserver(ms=>ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.classList?.contains('card')) io.observe(n)}))).observe(feed,{childList:true});
 
