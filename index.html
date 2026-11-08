@@ -428,15 +428,17 @@
     label();
     await Promise.all(streams.map(async([t,src])=>{
       const k=streamKey(t,src); buffers[k]=buffers[k]||[];
-      for(let hop=0; hop<8 && buffers[k].length<4 && !exhausted[k]; hop++){
-        try{ const got=await fetchStream(t,src); failures[k]=0; okStreams++;
-          buffers[k].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
+      const flush=()=>{ const out=[]; let n=0;
+        while(n<4 && buffers[k].length){ const p=buffers[k].shift(); const dk=dedupKey(p); if(!shown.has(p.id)&&!shownKeys.has(dk)){ shown.add(p.id); shownKeys.add(dk); out.push(p); n++; } }
+        if(out.length){ total+=out.length; onItems(out); } return out.length; };
+      let got=flush();                      // anything left over from last time shows immediately
+      for(let hop=0; hop<8 && !got && !exhausted[k]; hop++){
+        try{ const page=await fetchStream(t,src); failures[k]=0; okStreams++;
+          buffers[k].push(...page.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t)));
+          got=flush(); }
         catch(e){ console.warn(src,e); lastError=e; if(e.quota){ exhausted[k]=true; break; } failures[k]=(failures[k]||0)+1; if(failures[k]>=2){ exhausted[k]=true; } break; }
       }
-      const out=[]; let n=0;
-      while(n<4 && buffers[k].length){ const p=buffers[k].shift(); const dk=dedupKey(p); if(!shown.has(p.id)&&!shownKeys.has(dk)){ shown.add(p.id); shownKeys.add(dk); out.push(p); n++; } }
       pending--;
-      if(out.length){ total+=out.length; onItems(out); }
       if(pending>0) label();
     }));
     return total;
