@@ -603,6 +603,25 @@
     return `<div class="empty">OpenAlex's free daily quota is used up (resets at <b>${t}</b>). On mobile data this quota is shared with everyone behind your carrier's IP address, so it can vanish quickly.<br><br>Fix it for good: get a free personal key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
   }
 
+  // ---------- read aloud (Web Speech API) ----------
+  let speakingEl=null;
+  const speechText=p=>{
+    const clean=t=>String(t||'').replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$/g,' formula ').replace(/\\[a-zA-Z]+/g,' ').replace(/[{}^_]/g,' ').replace(/�/g,' ').replace(/^abstract[:.\s]*/i,'').replace(/\s+/g,' ').trim();
+    const au=p.authors.length?(p.authors.length>3?p.authors.slice(0,3).join(', ')+' and others':p.authors.join(', ')):'';
+    return `${clean(p.title)}. ${au?'By '+au+'. ':''}${p.published?(p.published.slice(0,4))+'. ':''}${clean(p.summary)||'No abstract available.'}`;
+  };
+  function stopSpeaking(){ try{speechSynthesis.cancel();}catch(e){} if(speakingEl){ const b=speakingEl.querySelector('.listen'); if(b) b.textContent='🔊 Listen'; } speakingEl=null; }
+  function speak(el,p){
+    stopSpeaking();
+    const u=new SpeechSynthesisUtterance(speechText(p)); u.lang='en-US'; u.rate=1.0;
+    const v=speechSynthesis.getVoices().find(v=>/en[-_]US/i.test(v.lang)&&/Samantha|Google US|Natural|Premium|Enhanced/i.test(v.name))||speechSynthesis.getVoices().find(v=>/^en/i.test(v.lang)); if(v) u.voice=v;
+    u.onend=u.onerror=()=>{ if(speakingEl===el) stopSpeaking(); };
+    speakingEl=el; el.querySelector('.listen').textContent='⏹ Stop';
+    try{ speechSynthesis.speak(u); }catch(e){ toast('Speech not available in this browser'); stopSpeaking(); }
+  }
+  // stop when the card leaves the screen or the user navigates away
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) stopSpeaking(); });
+
   // ---------- render ----------
   function card(p){
     const el=document.createElement('article'); el.className='card'; el.dataset.id=p.id;
@@ -613,7 +632,7 @@
       <h2 class="ttl">${esc(p.title)}</h2>
       <div class="auth">${esc(auth)}</div>
       <div class="abs clamp">${esc(p.summary||'(no abstract available)')}</div>
-      <button class="more">Read more</button>
+      <div class="row" style="gap:14px"><button class="more">Read more</button><button class="more listen" title="Read aloud">🔊 Listen</button></div>
       <div class="actions">
         <a href="${esc(p.url)}" target="_blank" rel="noopener">Open</a>
         ${p.pdf?`<a href="${esc(p.pdf)}" target="_blank" rel="noopener" title="${p.pdfPre?'Author manuscript / preprint PDF':'Publisher PDF'}">${p.pdfPre?'PDF (preprint)':'PDF'}</a>`:''}
@@ -621,7 +640,10 @@
         <button class="bib" title="Copy BibTeX">BibTeX</button>
         <button class="share">Copy</button>
       </div>`;
-    const abs=el.querySelector('.abs'), more=el.querySelector('.more');
+    const abs=el.querySelector('.abs'), more=el.querySelector('.more:not(.listen)');
+    const lis=el.querySelector('.listen');
+    if(!('speechSynthesis' in window)) lis.style.display='none';
+    lis.onclick=()=>{ if(speakingEl===el){ stopSpeaking(); } else speak(el,p); };
     more.onclick=()=>{const c=abs.classList.toggle('clamp');more.textContent=c?'Read more':'Show less'};
     el.querySelector('.save').onclick=ev=>{
       if(state.saved[p.id]){delete state.saved[p.id];ev.target.className='save';ev.target.textContent='Save';toast('Removed');}
@@ -669,7 +691,7 @@
   }
 
   function resetFeed(){
-    gen++; loadingGen=-1; cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
+    stopSpeaking(); gen++; loadingGen=-1; cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
     if(mode==='saved'){
       const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
       const bar=$('#savedBar'); bar.innerHTML=''; bar.appendChild(savedToolbar(list)); bar.style.display='';
@@ -687,8 +709,8 @@
     if(e.isIntersecting && e.intersectionRatio>.6){
       clearTimeout(el._seenT);
       el._seenT=setTimeout(()=>{ if(mode==='search') return; const id=el.dataset.id; if(id&&!state.seen[id]){state.seen[id]=1; if(Object.keys(state.seen).length>3000){state.seen={};} save();} },1500);
-    } else clearTimeout(el._seenT);
-  }),{root:feed,threshold:[.6]});
+    } else { clearTimeout(el._seenT); if(speakingEl===el&&e.intersectionRatio===0) stopSpeaking(); }
+  }),{root:feed,threshold:[0,.6]});
   new MutationObserver(ms=>ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.classList?.contains('card')) io.observe(n)}))).observe(feed,{childList:true});
 
   // ---------- chips ----------
