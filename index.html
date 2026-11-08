@@ -277,8 +277,14 @@
   function searchTerm(topic){ const t=topic.trim(); return hasOps(t)?t:keywords(t).join(' '); }
   // Client-side check: all keyword stems must appear within a short window of each other
   // in the title or abstract, so "density of the thermosphere" passes but scattered matches don't.
+  function searchMatches(p,q){
+    if(hasOps(q)) return true;
+    const hay=((p.title||'')+' '+(p.summary||'')+' '+(p.authors||[]).join(' ')+' '+(p.cat||'')).toLowerCase();
+    const toks=(hay.match(/[a-z0-9]+/g)||[]).map(stem);
+    return keywords(q).map(stem).every(k=>toks.some(t=>t.startsWith(k))||hay.includes(k));
+  }
   function relevant(p,topic){
-    if(mode==='search') return true;
+    if(mode==='search') return searchMatches(p,topic);
     const pt=parseTopic(topic);
     if(pt.kind==='author'){
       // Other sources match author names loosely: require the surname (last token) in the author list.
@@ -349,10 +355,11 @@
         const page=(cur||0)+1;
         const pt=parseTopic(topic);
         const filters=['to_publication_date:'+horizon(),'type:article|preprint|review|report|other|dissertation|book-chapter|book'];
-        if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); filters.push(KINDS[pt.kind].oaFilter+':'+e.id); if(pt.kind!=='journal') filters.push('has_abstract:true'); }
-        else filters.push('has_abstract:true');
+        const quick=mode==='search';
+        if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); filters.push(KINDS[pt.kind].oaFilter+':'+e.id); if(pt.kind!=='journal'&&!quick) filters.push('has_abstract:true'); }
+        else if(!quick) filters.push('has_abstract:true');
         let search='';
-        if(pt.kw){
+        if(pt.kw&&!quick){
           const q=encodeURIComponent(searchTerm(pt.kw));
           const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':'title_and_abstract.search';
           if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
@@ -360,8 +367,25 @@
         const sort={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'}[sortMode()];
         const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,cited_by_count,type';
         const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
-        const data=await getJSON(`https://api.openalex.org/works?filter=${filters.join(',')}${search}&sort=${sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
-        const results=data.results||[];
+        const run=(fl,srch)=>getJSON(`https://api.openalex.org/works?filter=${fl.join(',')}${srch||''}&sort=${sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
+        let results=[];
+        if(quick&&pt.kw&&!hasOps(pt.kw)){
+          // Google-style: words may be text terms or author names. Try the whole query as text, and (page 1 only)
+          // each word as an author surname with the remaining words as text. Merge, de-duplicate.
+          const words=keywords(pt.kw);
+          const variants=[run(filters,'&search='+encodeURIComponent(pt.kw))];
+          if(page===1&&words.length>=2&&words.length<=4) for(const w of words){
+            const rest=words.filter(x=>x!==w);
+            variants.push(run([...filters,'raw_author_name.search:'+encodeURIComponent(w),...(rest.length?['title_and_abstract.search:'+encodeURIComponent(rest.join(' '))]:[])]));
+          } else if(page===1&&words.length===1) variants.push(run([...filters,'raw_author_name.search:'+encodeURIComponent(words[0])]));
+          const sets=await Promise.all(variants.map(v=>v.catch(e=>{console.warn(e);return {};})));
+          const seen=new Set(); for(const d of sets) for(const w of (d.results||[])) if(!seen.has(w.id)){ seen.add(w.id); results.push(w); }
+          if(!sets.some(d=>d.results)) throw new Error('OpenAlex search failed');
+          if((sets[0].results||[]).length<PER) exhausted[streamKey(topic,'openalex')]=true;
+        } else {
+          if(quick&&pt.kw) search='&search='+encodeURIComponent(pt.kw);
+          const data=await run(filters,search); results=data.results||[];
+        }
         const items=results.map(w=>{
           const loc=w.primary_location||{}; const landing=loc.landing_page_url||w.doi||w.id;
           return { id:'oa:'+w.id.replace('https://openalex.org/',''), doi:w.doi||'', url:landing, pdf:w.open_access?.oa_url||loc.pdf_url||'',
@@ -387,7 +411,7 @@
           data=await getJSON(`https://api.semanticscholar.org/graph/v1/paper/search/bulk?query=${q}&sort=${sort}&fields=${fields}${tok}`);
           next=data.token||null;
         }
-        items=(data.data||[]).filter(w=>w.abstract).map(w=>{
+        items=(data.data||[]).filter(w=>w.abstract||mode==='search').map(w=>{
           const doi=w.externalIds?.DOI||''; const arx=w.externalIds?.ArXiv;
           return { id:'s2:'+w.paperId, doi, url:arx?`https://arxiv.org/abs/${arx}`:(doi?`https://doi.org/${doi}`:w.url), pdf:w.openAccessPdf?.url||(arx?`https://arxiv.org/pdf/${arx}`:''),
             title:(w.title||'Untitled').trim(), summary:w.abstract||'', authors:(w.authors||[]).map(a=>a.name).filter(Boolean),
@@ -403,7 +427,7 @@
         let filter=`until-pub-date:${horizon()},type:journal-article,type:posted-content`;
         let query='';
         if(pt.kind==='journal'){ const j=await resolveEntity('journal',pt.name); if(!j.issn) return {items:[],next:null}; filter+=`,issn:${j.issn}`; }
-        else filter+=',has-abstract:true';
+        else if(mode!=='search') filter+=',has-abstract:true';
         if(pt.kind==='author') query+='&query.author='+encodeURIComponent(pt.name);
         if(pt.kind==='institution') query+='&query.affiliation='+encodeURIComponent(pt.name);
         const ckw=pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw;
@@ -429,7 +453,7 @@
         if(ekw) parts.push('('+(hasOps(ekw)?ekw:keywords(ekw).join(' AND '))+')');
         if(pt.kind==='author') parts.push(`AUTH:"${pt.name}"`);
         if(pt.kind==='institution') parts.push(`AFF:"${pt.name}"`);
-        const q=encodeURIComponent(`${parts.join(' AND ')} AND HAS_ABSTRACT:Y AND (SRC:MED OR SRC:PPR OR SRC:PMC)`);
+        const q=encodeURIComponent(mode==='search'?`(${pt.kw}) AND (SRC:MED OR SRC:PPR OR SRC:PMC)`:`${parts.join(' AND ')} AND HAS_ABSTRACT:Y AND (SRC:MED OR SRC:PPR OR SRC:PMC)`);
         const sort={submittedDate:'&sort=P_PDATE_D desc',lastUpdatedDate:'&sort=CITED desc',relevance:''}[sortMode()];
         const cm=encodeURIComponent(cur||'*');
         const data=await getJSON(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${q}&format=json&resultType=core&pageSize=${PER}&cursorMark=${cm}${encodeURI(sort)}`);
@@ -449,7 +473,7 @@
       if(!state.adsKey) return {items:[],next:null};
       const pt=parseTopic(topic); const q=[];
       const akw=pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw;
-      if(akw){ q.push(hasOps(akw)?`abs:(${akw})`:`abs:(${keywords(akw).join(' ')})`); }
+      if(akw){ q.push(mode==='search'?`(${akw})`:(hasOps(akw)?`abs:(${akw})`:`abs:(${keywords(akw).join(' ')})`)); }
       if(pt.kind==='author'){ const parts=pt.name.trim().split(/\s+/); const last=parts.pop(); q.push(`author:"${last}${parts.length?', '+parts.join(' '):''}"`); }
       if(pt.kind==='institution') q.push(`aff:"${pt.name}"`);
       if(pt.kind==='journal') q.push(`pub:"${pt.name}"`);
@@ -457,7 +481,7 @@
       const sort={submittedDate:'date desc',lastUpdatedDate:'citation_count desc',relevance:'score desc'}[sortMode()];
       const start=cur||0;
       const fl='bibcode,title,author,abstract,pubdate,doi,citation_count,pub,identifier,doctype';
-      const url=`https://api.adsabs.harvard.edu/v1/search/query?q=${encodeURIComponent(q.join(' AND ')+' AND abstract:*')}&fl=${fl}&rows=${PER}&start=${start}&sort=${encodeURIComponent(sort)}`;
+      const url=`https://api.adsabs.harvard.edu/v1/search/query?q=${encodeURIComponent(q.join(' AND ')+(mode==='search'?'':' AND abstract:*'))}&fl=${fl}&rows=${PER}&start=${start}&sort=${encodeURIComponent(sort)}`;
       const data=await getJSON(url,{headers:{Authorization:'Bearer '+state.adsKey}});
       const docs=data.response?.docs||[];
       const items=docs.map(d=>{
