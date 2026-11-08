@@ -9,7 +9,7 @@ A phone-friendly feed for doomscrolling research papers on the topics you care a
 - Type topics or keywords; each is searched on [OpenAlex](https://openalex.org), [Semantic Scholar](https://www.semanticscholar.org), [Crossref](https://www.crossref.org) and optionally [Europe PMC](https://europepmc.org) — arXiv preprints plus journals — with duplicates merged. Sources are toggleable.
 - Swipe through one paper per screen: venue, date, citations, authors, abstract, with **Open** / **PDF** / **Save** / **Copy**.
 - Keyword variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only when the keywords appear close together in the title or abstract. Quotes and AND / OR / NOT give you exact control.
-- Follow journals, authors or institutions: `journal:Nature`, `author:Jane Doe`, `institution:MIT`, or filter inside one with `journal:Nature | space weather`.
+- Follow journals, authors or institutions: `journal:Nature`, `author:Daniele Sicoli`, `institution:MIT`, or filter inside one with `journal:Nature | space weather`.
 - Sort by newest, most cited, or relevance; mix topics or view one at a time.
 - Infinite scroll, skips what you've already seen, and a saved list — all stored locally in your browser. Nothing is sent anywhere except the search queries to OpenAlex.
 

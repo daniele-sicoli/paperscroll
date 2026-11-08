@@ -96,7 +96,7 @@
       <input id="newTopic" placeholder='e.g. thermosphere density, "SINDy", space weather'>
       <button class="primary" id="addTopic">Add</button>
     </div>
-    <div class="hint">Each topic is searched on every enabled source below. Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>. Follow a journal, author or institution: <code>journal:Nature</code>, <code>author:Piyush Mehta</code>, <code>institution:West Virginia University</code> — add <code>| keywords</code> to filter inside, e.g. <code>journal:Nature | space weather</code>.</div>
+    <div class="hint">Each topic is searched on every enabled source below. Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>. Follow a journal, author or institution: <code>journal:Nature</code>, <code>author:Daniele Sicoli</code>, <code>institution:West Virginia University</code> — add <code>| keywords</code> to filter inside, e.g. <code>journal:Nature | space weather</code>.</div>
     <div class="topiclist" id="topicList"></div>
     <div class="lim" id="limLabel"></div>
 
@@ -264,7 +264,7 @@
   const dedupKey=p=>p.doi?('doi:'+p.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//,'')):('t:'+normTitle(p.title));
   const stripTags=h=>String(h||'').replace(/<[^>]+>/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
 
-  // Follows: "journal:Nature", "author:Piyush Mehta", "institution:West Virginia University",
+  // Follows: "journal:Nature", "author:Daniele Sicoli", "institution:West Virginia University",
   // each optionally filtered with "| keywords".
   const KINDS={journal:{ep:'sources',icon:'📰',oaFilter:'primary_location.source.id'},
                author:{ep:'authors',icon:'👤',oaFilter:'authorships.author.id'},
