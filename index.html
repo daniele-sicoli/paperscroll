@@ -83,6 +83,17 @@
   .land .trend div{flex:1;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px;position:relative}
   .land .trend div i{position:absolute;bottom:-16px;left:0;right:0;text-align:center;font-size:9px;color:var(--muted);font-style:normal}
   .land .sub{font-size:12px;color:var(--muted);margin:-4px 0 8px}
+  .conf{background:var(--bg);border-radius:12px;padding:12px;margin-bottom:8px}
+  .conf .n{font-weight:700;font-size:15px;line-height:1.3}
+  .conf .m{font-size:12px;color:var(--muted);margin-top:3px}
+  .conf .dl{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-top:6px;padding-top:6px;border-top:1px solid #1e2738}
+  .conf .dl b{color:var(--accent2);white-space:nowrap}
+  .conf .dl.past{opacity:.45}
+  .conf .dl.soon b{color:var(--danger)}
+  .conf .tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+  .conf .tags span{font-size:11px;background:var(--card2);padding:2px 7px;border-radius:6px;color:var(--muted)}
+  .conf .tags span.hit{color:var(--ok);border:1px solid #2a4a3a}
+  .conf .est{font-size:11px;color:var(--muted)}
   .map .r{display:flex;align-items:center;gap:8px;margin-bottom:5px;cursor:pointer}
   .map .r .l{flex:0 0 44%;font-size:12px;line-height:1.25;color:var(--text);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   .map .r .l small{display:block;color:var(--muted);font-size:10px}
@@ -98,6 +109,7 @@
 <header>
   <div class="row">
     <h1>Paper<span>Scroll</span></h1>
+    <button class="icon" id="btnConf" title="Conferences & deadlines">🗓</button>
     <button class="icon" id="btnPlay" title="Play all: read abstracts one after another">▶︎</button>
     <button class="icon" id="btnLand" title="Landscape">📊</button>
     <button class="icon" id="btnAccount" title="Account">👤</button>
@@ -186,6 +198,20 @@
     <h2 id="landTitle">Landscape</h2>
     <div id="landBody"></div>
     <div class="row" style="margin-top:16px"><button class="primary" id="closeLand" style="flex:1">Done</button></div>
+  </div>
+</div>
+
+<div class="sheet" id="confSheet">
+  <div class="panel land" style="max-height:92dvh">
+    <h2>Conferences &amp; deadlines</h2>
+    <div class="seg" id="confSeg"><button data-v="mine" class="on">Matching my topics</button><button data-v="all">All</button><button data-v="past">Include past</button></div>
+    <div id="confBody" style="margin-top:12px"></div>
+    <label>Add your own</label>
+    <div class="row"><input id="confName" placeholder="Conference name"></div>
+    <div class="row" style="margin-top:6px"><input id="confDate" type="date" style="flex:1" title="Deadline"><input id="confWhat" placeholder="What (e.g. abstracts)" style="flex:1"></div>
+    <div class="row" style="margin-top:6px"><input id="confUrl" placeholder="https://… (optional)" style="flex:1"><button class="primary" id="confAdd">Add</button></div>
+    <div class="hint">Your entries stay on this device. To add a conference for everyone, <a href="https://github.com/daniele-sicoli/paperscroll/edit/main/conferences.json" target="_blank" rel="noopener" style="color:var(--accent)">edit conferences.json on GitHub</a>.</div>
+    <div class="row" style="margin-top:16px"><button class="primary" id="closeConf" style="flex:1">Done</button></div>
   </div>
 </div>
 
@@ -984,6 +1010,50 @@
   searchInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); if(!searchInput.value.trim()&&mode==='search'){ mode='feed'; searchQ=''; renderChips(); resetFeed(); } else runSearch(); } });
   searchInput.addEventListener('search',()=>{ if(!searchInput.value.trim()&&mode==='search'){ mode='feed'; searchQ=''; renderChips(); resetFeed(); } });
 
+  // ---------- conferences & deadlines ----------
+  const confSheet=$('#confSheet'); let confView='mine', confData=null;
+  $('#closeConf').onclick=()=>confSheet.classList.remove('open');
+  confSheet.addEventListener('click',e=>{if(e.target===confSheet)confSheet.classList.remove('open')});
+  $('#btnConf').onclick=()=>openConfs();
+  [...$('#confSeg').children].forEach(b=>b.onclick=()=>{ confView=b.dataset.v; [...$('#confSeg').children].forEach(x=>x.classList.toggle('on',x===b)); renderConfs(); });
+  async function loadConfs(){
+    if(confData) return confData;
+    try{ const r=await fetch('conferences.json?t='+Math.floor(Date.now()/3600000),{cache:'no-store'}); confData=await r.json(); }
+    catch(e){ confData={conferences:[]}; }
+    return confData;
+  }
+  const myTerms=()=>{ const t=new Set(); for(const x of state.topics){ const pt=parseTopic(x); for(const w of keywords(pt.kw||pt.name||'')) t.add(stem(w)); } return t; };
+  const confMatches=(c,terms)=>(c.tags||[]).filter(tag=>keywords(tag).some(w=>terms.has(stem(w))));
+  const daysTo=d=>Math.ceil((new Date(d+'T23:59:59')-Date.now())/86400000);
+  function renderConfs(){
+    const b=$('#confBody'); const terms=myTerms(); const today=new Date().toISOString().slice(0,10);
+    const own=(state.myConfs||[]).map(c=>Object.assign({own:true,tags:[]},c));
+    let list=[...(confData.conferences||[]),...own].map(c=>{
+      const dls=(c.deadlines||[]).map(d=>Object.assign({},d,{days:daysTo(d.date),past:d.date<today||d.closed}));
+      const next=dls.filter(d=>!d.past).sort((a,b)=>a.date.localeCompare(b.date))[0];
+      return Object.assign({},c,{dls,next,hits:confMatches(c,terms),over:(c.end||c.start||'9999')<today});
+    });
+    if(confView!=='past') list=list.filter(c=>!c.over);
+    if(confView==='mine') list=list.filter(c=>c.hits.length||c.own);
+    list.sort((a,b)=>{ const ad=a.next?a.next.date:'9999', bd=b.next?b.next.date:'9999'; return ad.localeCompare(bd)||(a.start||'').localeCompare(b.start||''); });
+    const fmt=d=>new Date(d+'T12:00:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+    b.innerHTML=list.map((c,i)=>`<div class="conf">
+        <div class="n">${c.url?`<a href="${esc(c.url)}" target="_blank" rel="noopener" style="color:var(--text);text-decoration:none">${esc(c.name)}</a>`:esc(c.name)}${c.own?` <span class="est">· yours</span>`:''}</div>
+        <div class="m">${c.start?fmt(c.start)+(c.end&&c.end!==c.start?' – '+fmt(c.end):''):''}${c.location?' · '+esc(c.location):''}${c.org?' · '+esc(c.org):''}${c.tbc?' · <span class="est">dates TBC</span>':''}</div>
+        ${c.dls.map(d=>`<div class="dl ${d.past?'past':''} ${!d.past&&d.days<=14?'soon':''}"><span>${esc(d.what)}${d.estimated?' <span class="est">(est.)</span>':''}</span><b>${d.past?'closed · '+fmt(d.date):(d.days<=0?'today':d.days+' d · '+fmt(d.date))}</b></div>`).join('')}
+        ${c.tags&&c.tags.length?`<div class="tags">${c.tags.map(t=>`<span class="${c.hits.includes(t)?'hit':''}">${esc(t)}</span>`).join('')}</div>`:''}
+        ${c.own?`<div class="row" style="margin-top:8px"><button data-del="${esc(c.id)}" style="font-size:12px;color:var(--danger)">Remove</button></div>`:''}
+      </div>`).join('')||`<div class="empty">${confView==='mine'?'No listed conference matches your topics yet — switch to <b>All</b> or add your own below.':'Nothing to show.'}</div>`;
+    b.querySelectorAll('button[data-del]').forEach(btn=>btn.onclick=()=>{ state.myConfs=(state.myConfs||[]).filter(c=>c.id!==btn.dataset.del); save(); renderConfs(); });
+  }
+  async function openConfs(){ $('#confBody').innerHTML=`<div class="loader"><span class="spin"></span>Loading…</div>`; confSheet.classList.add('open'); await loadConfs(); renderConfs(); }
+  $('#confAdd').onclick=()=>{
+    const name=$('#confName').value.trim(), date=$('#confDate').value, what=$('#confWhat').value.trim()||'Deadline', url=$('#confUrl').value.trim();
+    if(!name||!date) return toast('Name and deadline date are needed');
+    state.myConfs=state.myConfs||[]; state.myConfs.push({id:'c'+Date.now(),name,url,deadlines:[{what,date}],start:date});
+    save(); $('#confName').value='';$('#confDate').value='';$('#confWhat').value='';$('#confUrl').value=''; renderConfs(); toast('Added');
+  };
+
   // ---------- landscape: state of the art for a topic ----------
   const landSheet=$('#landSheet');
   $('#closeLand').onclick=()=>landSheet.classList.remove('open');
@@ -1211,7 +1281,7 @@
       state.topics=topics;
       state.saved=Object.assign({},data.saved||{},state.saved);
       state.seen=Object.assign({},data.seen||{},state.seen);
-      if(data.settings){ for(const k of ['sort','field','mix','sources']) if(data.settings[k]) state[k]=data.settings[k]; }
+      if(data.settings){ for(const k of ['sort','field','mix','sources','myConfs']) if(data.settings[k]) state[k]=data.settings[k]; }
     }
     SS('ps_state',state);
     await pushNow();
@@ -1221,7 +1291,7 @@
   async function pushNow(){
     if(!sb||!user) return;
     const seenKeys=Object.keys(state.seen); const seen=seenKeys.length>2000?Object.fromEntries(seenKeys.slice(-2000).map(k=>[k,1])):state.seen;
-    const {error}=await sb.from('user_data').upsert({user_id:user.id,topics:state.topics,saved:state.saved,seen,settings:{sort:state.sort,field:state.field,mix:state.mix,sources:state.sources},updated_at:new Date().toISOString()});
+    const {error}=await sb.from('user_data').upsert({user_id:user.id,topics:state.topics,saved:state.saved,seen,settings:{sort:state.sort,field:state.field,mix:state.mix,sources:state.sources,myConfs:state.myConfs},updated_at:new Date().toISOString()});
     if(error) console.warn('sync',error.message);
   }
   async function initCloud(){
