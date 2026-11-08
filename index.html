@@ -226,12 +226,14 @@
         const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),15000);
         const res=await fetch(url,{cache:'no-store',signal:ctl.signal}).finally(()=>clearTimeout(tm));
         if(res.status===429){
-          // Per-second limit → brief retry once; daily budget → stop until reset.
+          // Declare the daily budget exhausted only when OpenAlex says so (body or headers);
+          // a burst 429 (per-second limit) is free and just needs a short back-off.
           let body=''; try{body=await res.text()}catch(e){}
-          const daily=/daily|budget|quota|limit exceeded/i.test(body)||i>=1;
+          const rem=res.headers.get('x-ratelimit-remaining');
+          const daily=/daily|budget|exhausted|exceeded your/i.test(body)||(rem!==null&&Number(rem)<=0);
           if(daily&&opts.quota){ quotaHit=nextResetUTC(); throw new QuotaError(); }
-          if(daily) throw new Error('rate limited');
-          await sleep(1200); continue;
+          err=new Error('rate limited'+(body?': '+body.slice(0,80):''));
+          await sleep(1500*(i+1)); continue;
         }
         if(res.status>=500){ err=new Error('busy '+res.status); await sleep(1500*(i+1)); continue; }
         if(res.status===403||res.status===401) throw new Error('OpenAlex rejected the API key');
@@ -509,7 +511,7 @@
 
   function quotaMsg(){
     const t=new Date(quotaHit).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
-    return `<div class="empty">OpenAlex's free daily quota is used up (resets at <b>${t}</b>); other sources are still searched.<br><br>Want 10× more? Get a free key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
+    return `<div class="empty">OpenAlex's free daily quota is used up (resets at <b>${t}</b>). On mobile data this quota is shared with everyone behind your carrier's IP address, so it can vanish quickly.<br><br>Fix it for good: get a free personal key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
   }
 
   // ---------- render ----------
@@ -680,10 +682,12 @@
       const base=await oaTopicFilters(topic);
       const sel='id,doi,display_name,title,publication_date,authorships,primary_location,cited_by_count';
       const y=new Date().getFullYear();
-      const [found,rising,reviews,authors,insts,years,kws]=await Promise.all([
+      const [found,rising,reviews]=await Promise.all([
         oaList(base,`sort=cited_by_count:desc&per-page=8&select=${sel}`),
         oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=8&select=${sel}`),
-        oaList([...base,'type:review'],`sort=publication_date:desc&per-page=6&select=${sel}`),
+        oaList([...base,'type:review'],`sort=publication_date:desc&per-page=6&select=${sel}`)
+      ]);
+      const [authors,insts,years,kws]=await Promise.all([
         oaList(base,`group_by=authorships.author.id&per-page=12`),
         oaList(base,`group_by=authorships.institutions.id&per-page=10`),
         oaList([...base,`from_publication_year:${y-14}`],`group_by=publication_year&per-page=20`),
