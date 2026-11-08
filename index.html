@@ -226,15 +226,15 @@
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   // OpenAlex has a daily free budget (~100 searches/day without a key, ~1000 with a free key).
   // Cache pages for 3 h and stop retrying once the budget is hit.
-  let quotaHit=null; // ms timestamp of reset, or null
+  let quotaHit=null, quotaMsgText=''; // ms timestamp of reset, or null; last OpenAlex message
   const nextResetUTC=()=>{const d=new Date();return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()+1)};
   const CACHE_TTL=3*3600*1000;
-  const cacheGet=k=>{try{const v=JSON.parse(localStorage.getItem('oa:'+k));return v&&Date.now()-v.t<CACHE_TTL?v.d:null}catch(e){return null}};
+  const cacheGet=(k,ttl)=>{try{const v=JSON.parse(localStorage.getItem('oa:'+k));return v&&Date.now()-v.t<(ttl||CACHE_TTL)?v.d:null}catch(e){return null}};
   const cachePut=(k,d)=>{try{localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}))}catch(e){/* storage full: drop the page cache and retry once */ try{Object.keys(localStorage).filter(x=>x.startsWith('oa:')).forEach(x=>localStorage.removeItem(x)); localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}));}catch(_){}}};
-  class QuotaError extends Error{constructor(){super('quota');this.quota=true}}
+  class QuotaError extends Error{constructor(msg){super(msg||'quota');this.quota=true}}
   async function getJSON(url,opts={}){
     const key=url.replace(/[?&]api_key=[^&]*/,'')+(opts.headers?'#auth':'');
-    const c=cacheGet(key); if(c) return c;
+    const c=cacheGet(key,opts.ttl); if(c) return c;
     if(opts.quota&&quotaHit&&Date.now()<quotaHit) throw new QuotaError();
     let err;
     for(let i=0;i<3;i++){
@@ -247,7 +247,7 @@
           let body=''; try{body=await res.text()}catch(e){}
           const rem=res.headers.get('x-ratelimit-remaining');
           const daily=/daily|budget|exhausted|exceeded your/i.test(body)||(rem!==null&&Number(rem)<=0);
-          if(daily&&opts.quota){ quotaHit=nextResetUTC(); throw new QuotaError(); }
+          if(daily&&opts.quota){ quotaHit=nextResetUTC(); quotaMsgText=body.slice(0,160); throw new QuotaError(body.slice(0,160)); }
           err=new Error('rate limited'+(body?': '+body.slice(0,80):''));
           await sleep(1500*(i+1)); continue;
         }
@@ -603,6 +603,7 @@
 
   function quotaMsg(){
     const t=new Date(quotaHit).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+    if(state.oaKey) return `<div class="empty">Your OpenAlex key's daily budget is used up (resets at <b>${t}</b>, midnight UTC). Free keys allow about 1,000 calls a day; a Landscape uses ~18, a feed page 1 per topic.<br><br><span style="font-size:12px;opacity:.7">${esc(quotaMsgText||'')}</span></div>`;
     return `<div class="empty">OpenAlex's free daily quota is used up (resets at <b>${t}</b>). On mobile data this quota is shared with everyone behind your carrier's IP address, so it can vanish quickly.<br><br>Fix it for good: get a free personal key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
   }
 
@@ -845,7 +846,7 @@
     return f;
   }
   const oaExtra=()=>(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
-  const oaList=(filters,params)=>getJSON(`https://api.openalex.org/works?filter=${filters.join(',')}&${params}${oaExtra()}`,{quota:true});
+  const oaList=(filters,params)=>getJSON(`https://api.openalex.org/works?filter=${filters.join(',')}&${params}${oaExtra()}`,{quota:true,ttl:24*3600*1000});
   const paperRow=w=>{
     const loc=w.primary_location||{}; const url=loc.landing_page_url||w.doi||w.id;
     const a=(w.authorships||[]).map(x=>x.author?.display_name).filter(Boolean); const au=a.length>2?a[0]+' et al.':a.join(', ');
@@ -937,8 +938,8 @@
         insts: soft(oaList(base,`group_by=authorships.institutions.id`)),
         years: soft(oaList([...base,`publication_year:>${y-15}`],`group_by=publication_year`)),
         kws: soft(oaList(base,`group_by=keywords.id`)),
-        rec: Promise.all([1,2,3].map(pg=>soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=${pg}&select=${selT}`)))),
-        old: Promise.all([1,2].map(pg=>soft(oaList([...base,`from_publication_date:${y-9}-01-01`,`to_publication_date:${y-5}-12-31`],`sort=cited_by_count:desc&per-page=100&page=${pg}&select=${selT}`))))
+        rec: Promise.all([1,2].map(pg=>soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=${pg}&select=${selT}`)))),
+        old: Promise.all([1].map(pg=>soft(oaList([...base,`from_publication_date:${y-9}-01-01`,`to_publication_date:${y-5}-12-31`],`sort=cited_by_count:desc&per-page=100&page=${pg}&select=${selT}`))))
       };
 
       // Phase 1: skeleton as soon as the cheap aggregates are in.
@@ -1004,8 +1005,8 @@
         fill('landEmerg',`<div class="sub">Acronyms and phrases frequent in the ${em.nRec} newest abstracts (since ${y-1}) but rare in ${em.nOld} highly-cited ones from ${y-9}–${y-5}. Tap to see papers.</div><div class="who">${em.acr.map(chip).join('')}${em.grams.map(chip).join('')||'<div class="sub">—</div>'}</div>`);
       });
       // Map needs the lines first; one cheap aggregate per line.
-      Promise.all(lines.slice(0,10).map(l=>soft(oaList([...base,`${lineFilter}:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`)))).then(dists=>{
-        const rows=lines.slice(0,10).map((l,i)=>{
+      Promise.all(lines.slice(0,8).map(l=>soft(oaList([...base,`${lineFilter}:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`)))).then(dists=>{
+        const rows=lines.slice(0,8).map((l,i)=>{
           const byY=new Map((dists[i].group_by||[]).map(g=>[+g.key,g.count]));
           const counts=[]; for(let yy=Y0;yy<=y;yy++) counts.push(byY.get(yy)||0);
           const tot=counts.reduce((a,b)=>a+b,0)||1; let cum=0, emerge=y, peak=Y0, pk=-1;
