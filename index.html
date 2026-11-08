@@ -763,113 +763,119 @@
     const pt=parseTopic(topic); const title=pt.kind?`${KINDS[pt.kind].icon} ${pt.name}${pt.kw?' · '+pt.kw:''}`:topic;
     $('#landTitle').textContent='Landscape: '+title; const b=$('#landBody');
     b.innerHTML=`<div class="loader"><span class="spin"></span>Mapping the field…</div>`; landSheet.classList.add('open');
+    const myTopic=topic; const live=()=>landSheet.classList.contains('open')&&$('#landTitle').textContent==='Landscape: '+title;
+    const pend=`<div class="loader" style="padding:10px"><span class="spin"></span>Loading…</div>`;
+    const bind=root=>root.querySelectorAll('.who button, .map .r').forEach(btn=>btn.onclick=()=>{
+        const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?(/^[A-Z0-9-]+$/.test(n)?n:n.toLowerCase()):`${k}:${n}`;
+        if(state.topics.includes(t)) return toast('Already in your topics');
+        if(!canAddTopic()) return toast(`Max ${MAX_TOPICS} topics — remove one first`);
+        state.topics.push(t); save(); renderChips(); btn.style.borderColor='var(--ok)'; btn.style.opacity='.6'; toast('Added: '+t);
+      });
+    const fill=(id,html)=>{ if(!live()) return; const el=b.querySelector('#'+id); if(el){ el.innerHTML=html; bind(el);} };
     try{
       const base=await oaTopicFilters(topic);
       const sel='id,doi,display_name,title,publication_date,authorships,primary_location,cited_by_count,fwci,citation_normalized_percentile,abstract_inverted_index';
-      const y=new Date().getFullYear();
-      // Each section is independent: a failing query shows as "—" instead of killing the whole view.
-      const soft=p=>p.then(v=>v,e=>{ if(e.quota) throw e; console.warn('landscape',e); errs.push(e.message||String(e)); return {}; });
-      const errs=[];
-      const [found,rising,reviews,top]=await Promise.all([
-        soft(oaList(base,`sort=cited_by_count:desc&per-page=25&select=${sel}`)),
-        // Recent papers in the top 10% of their field for citations (field- and age-normalized).
-        soft(oaList([...base,`from_publication_date:${y-5}-01-01`,'citation_normalized_percentile.value:>0.9'],`sort=cited_by_count:desc&per-page=50&select=${sel}`)),
-        soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=25&select=${sel}`)),
-        soft(oaList([...base,'type:review'],`sort=publication_date:desc&per-page=15&select=${sel}`))
-      ]);
-      const [authors,topicsAll,topicsRecent,kwsRecent,insts,years,kws]=await Promise.all([
-        soft(oaList(base,`group_by=authorships.author.id`)),
-        soft(oaList(base,`group_by=primary_topic.id`)),
-        soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`group_by=primary_topic.id`)),
-        soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`group_by=keywords.id`)),
-        soft(oaList(base,`group_by=authorships.institutions.id`)),
-        soft(oaList([...base,`publication_year:>${y-15}`],`group_by=publication_year`)),
-        soft(oaList(base,`group_by=keywords.id`))
-      ]);
-      const selfName=pt.kind==='author'?pt.name.toLowerCase():''; const selfName0=selfName;
-      const total=(found.meta&&found.meta.count)||0;
-      // Emerging terms: compare acronyms / phrases in the newest abstracts against an older sample.
       const selT='display_name,title,abstract_inverted_index,publication_date';
-      const [recA,recB,recC,oldA,oldB]=await Promise.all([
-        soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=1&select=${selT}`)),
-        soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=2&select=${selT}`)),
-        soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=3&select=${selT}`)),
-        soft(oaList([...base,`from_publication_date:${y-9}-01-01`,`to_publication_date:${y-5}-12-31`],`sort=cited_by_count:desc&per-page=100&page=1&select=${selT}`)),
-        soft(oaList([...base,`from_publication_date:${y-9}-01-01`,`to_publication_date:${y-5}-12-31`],`sort=cited_by_count:desc&per-page=100&page=2&select=${selT}`))
-      ]);
-      const docText=w=>(w.display_name||w.title||'')+'. '+deinvert(w.abstract_inverted_index);
-      const recDocs=[...(recA.results||[]),...(recB.results||[]),...(recC.results||[])].map(docText), oldDocs=[...(oldA.results||[]),...(oldB.results||[])].map(docText);
-      const emerging=emergingTerms(recDocs,oldDocs,topic);
-      // Lines of work: OpenAlex research topics within this field, with recent share to flag what's heating up.
-      // OpenAlex topics are coarse for some fields (one bucket may hold >60%); then use keywords as the threads.
-      const tAll=(topicsAll.group_by||[]).filter(g=>g.key_display_name);
-      const tSum=tAll.reduce((a,g)=>a+g.count,0)||1;
-      const useKw=pt.kind==='field'||(tAll[0]&&tAll[0].count/tSum>0.6);
-      const linesAll={group_by:useKw?(kws.group_by||[]).filter(g=>g.key_display_name&&!(pt.kw||'').toLowerCase().includes(g.key_display_name.toLowerCase())):tAll};
-      const linesRecent=useKw?kwsRecent:topicsRecent;
-      const lineFilter=useKw?'keywords.id':'primary_topic.id';
-      const lineKind=useKw?'kw':'field';
-      const recMap=new Map((linesRecent.group_by||[]).map(g=>[g.key,g.count]));
-      const allLines=(linesAll.group_by||[]).filter(g=>g.key_display_name&&!(pt.kind==='field'&&g.key_display_name===pt.name));
-      const sumAll=allLines.reduce((a,g)=>a+g.count,0)||1, sumRec=[...recMap.values()].reduce((a,b)=>a+b,0)||1;
-      const avgShare=sumRec/sumAll;
-      const lines=allLines.slice(0,14).map(g=>{const r=recMap.get(g.key)||0; return {id:String(g.key).replace('https://openalex.org/',''),name:g.key_display_name,n:g.count,r,heat:(r/Math.max(g.count,1))/avgShare};});
+      const y=new Date().getFullYear(), Y0=y-29;
+      const errs=[];
+      const soft=p=>p.then(v=>v,e=>{ if(e.quota) throw e; console.warn('landscape',e); errs.push(e.message||String(e)); return {}; });
       const fmtN=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
       const growth=l=>l.r>=15&&l.heat>1.3?` 🔥×${l.heat.toFixed(1)}`:(l.r>=15&&l.heat<0.6?` ↓×${l.heat.toFixed(1)}`:'');
-      // Map: per-line year distribution (one cheap aggregate call each) → ordered oldest-emerging to newest.
-      const Y0=y-29;
-      const dists=await Promise.all(lines.slice(0,10).map(l=>soft(oaList([...base,`${lineFilter}:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`))));
-      const mapRows=lines.slice(0,10).map((l,i)=>{
-        const byY=new Map((dists[i].group_by||[]).map(g=>[+g.key,g.count]));
-        const counts=[]; for(let yy=Y0;yy<=y;yy++) counts.push(byY.get(yy)||0);
-        const tot=counts.reduce((a,b)=>a+b,0)||1; let cum=0, emerge=y, peak=Y0, pk=-1;
-        counts.forEach((c,k)=>{ cum+=c; if(emerge===y&&cum>=0.05*tot&&c>=2) emerge=Y0+k; if(c>pk){pk=c;peak=Y0+k;} });
-        return Object.assign({},l,{counts,emerge,peak,max:Math.max(1,...counts)});
-      }).sort((a,b)=>a.emerge-b.emerge||b.n-a.n);
-      // Same keyword-proximity check as the feed, so "space" + "weather" scattered in an abstract doesn't count.
       const onTopic=w=>relevant({title:w.display_name||w.title||'',summary:deinvert(w.abstract_inverted_index),authors:(w.authorships||[]).map(a=>a.author?.display_name||''),src:'OpenAlex'},topic);
       const pick=(r,n)=>(r.results||[]).filter(onTopic).slice(0,n);
-      const foundL=pick(found,8), risingL=pick(rising,8), reviewsL=pick(reviews,6);
-      const topW=(top.results||[]).filter(onTopic); const topN=(top.meta&&top.meta.count)||topW.length;
-      const tally=(get)=>{ const m=new Map(); for(const w of topW){ const seen=new Set(); for(const n of get(w)){ if(!n||seen.has(n)) continue; seen.add(n); const e=m.get(n)||{n:0,f:0}; e.n++; e.f+=w.fwci||0; m.set(n,e);} } return [...m].sort((a,b)=>b[1].n-a[1].n||b[1].f-a[1].f); };
-      const impAuth=tally(w=>(w.authorships||[]).map(a=>a.author?.display_name)).filter(([n])=>n.toLowerCase()!==selfName0).slice(0,10);
-      const impInst=tally(w=>(w.authorships||[]).flatMap(a=>(a.institutions||[]).map(i=>i.display_name))).slice(0,8);
-      const topByFwci=topW.slice().sort((a,b)=>(b.fwci||0)-(a.fwci||0)).slice(0,8);
+      const selfName=pt.kind==='author'?pt.name.toLowerCase():'';
+      const docText=w=>(w.display_name||w.title||'')+'. '+deinvert(w.abstract_inverted_index);
+
+      // Fire everything independent at once (OpenAlex allows 100 req/s; these are cheap aggregate/list calls).
+      const P={
+        found: soft(oaList(base,`sort=cited_by_count:desc&per-page=25&select=${sel}`)),
+        rising: soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=25&select=${sel}`)),
+        reviews: soft(oaList([...base,'type:review'],`sort=publication_date:desc&per-page=15&select=${sel}`)),
+        top: soft(oaList([...base,`from_publication_date:${y-5}-01-01`,'citation_normalized_percentile.value:>0.9'],`sort=cited_by_count:desc&per-page=50&select=${sel}`)),
+        authors: soft(oaList(base,`group_by=authorships.author.id`)),
+        topicsAll: soft(oaList(base,`group_by=primary_topic.id`)),
+        topicsRecent: soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`group_by=primary_topic.id`)),
+        kwsRecent: soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`group_by=keywords.id`)),
+        insts: soft(oaList(base,`group_by=authorships.institutions.id`)),
+        years: soft(oaList([...base,`publication_year:>${y-15}`],`group_by=publication_year`)),
+        kws: soft(oaList(base,`group_by=keywords.id`)),
+        rec: Promise.all([1,2,3].map(pg=>soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=${pg}&select=${selT}`)))),
+        old: Promise.all([1,2].map(pg=>soft(oaList([...base,`from_publication_date:${y-9}-01-01`,`to_publication_date:${y-5}-12-31`],`sort=cited_by_count:desc&per-page=100&page=${pg}&select=${selT}`))))
+      };
+
+      // Phase 1: skeleton as soon as the cheap aggregates are in.
+      const [found,years,authors,insts,kws,topicsAll,topicsRecent,kwsRecent]=await Promise.all([P.found,P.years,P.authors,P.insts,P.kws,P.topicsAll,P.topicsRecent,P.kwsRecent]);
+      if(!live()) return;
+      const total=(found.meta&&found.meta.count)||0;
       const yrs=(years.group_by||[]).map(g=>({y:+g.key,n:g.count})).filter(g=>g.y>=y-14&&g.y<=y).sort((a,b)=>a.y-b.y);
       const max=Math.max(1,...yrs.map(g=>g.n));
       const auth=(authors.group_by||[]).filter(g=>g.key_display_name&&g.key_display_name.toLowerCase()!==selfName).slice(0,10);
       const inst=(insts.group_by||[]).filter(g=>g.key_display_name).slice(0,8);
       const kw=(kws.group_by||[]).filter(g=>g.key_display_name&&!(pt.kw||'').toLowerCase().includes(g.key_display_name.toLowerCase())).slice(0,12);
+      // Lines of work (topics, or keywords when one topic dominates).
+      const tAll=(topicsAll.group_by||[]).filter(g=>g.key_display_name);
+      const tSum=tAll.reduce((a,g)=>a+g.count,0)||1;
+      const useKw=pt.kind==='field'||(tAll[0]&&tAll[0].count/tSum>0.6);
+      const allLines=(useKw?(kws.group_by||[]).filter(g=>g.key_display_name&&!(pt.kw||'').toLowerCase().includes(g.key_display_name.toLowerCase())):tAll).filter(g=>!(pt.kind==='field'&&g.key_display_name===pt.name));
+      const recMap=new Map(((useKw?kwsRecent:topicsRecent).group_by||[]).map(g=>[g.key,g.count]));
+      const lineFilter=useKw?'keywords.id':'primary_topic.id', lineKind=useKw?'kw':'field';
+      const sumAll=allLines.reduce((a,g)=>a+g.count,0)||1, sumRec=[...recMap.values()].reduce((a,b)=>a+b,0)||1, avgShare=sumRec/sumAll;
+      const lines=allLines.slice(0,14).map(g=>{const r=recMap.get(g.key)||0; return {id:String(g.key).replace('https://openalex.org/',''),name:g.key_display_name,n:g.count,r,heat:(r/Math.max(g.count,1))/avgShare};});
+      const foundL=pick(found,8);
       b.innerHTML=`
-        <div class="sub">${total?total.toLocaleString()+' papers indexed on OpenAlex'+(pt.kind?'':' matching this topic'):''}${errs.length?`<br><span style="opacity:.7">Some sections unavailable: ${esc(errs[0])}</span>`:''}</div>
+        <div class="sub" id="landNote">${total?total.toLocaleString()+' papers indexed on OpenAlex'+(pt.kind?'':' matching this topic'):''}</div>
         <h3>Trend · papers per year</h3>
         <div class="trend">${yrs.map(g=>`<div style="height:${Math.round(100*g.n/max)}%" title="${g.y}: ${g.n}"><i>${String(g.y).slice(2)}</i></div>`).join('')}</div>
         <div style="height:14px"></div>
         <h3>Map · lines of work, oldest to newest</h3>
         <div class="sub">Each row is a research thread; shading = papers per year since ${Y0}. Ordered by when the thread emerged. Tap to follow.</div>
-        <div class="map">${mapRows.map(r=>`<div class="r" data-k="${lineKind}" data-n="${esc(r.name)}"><div class="l">${esc(r.name)}<small>since ${r.emerge} · peak ${r.peak} · ${fmtN(r.n)} papers${growth(r)}</small></div><div class="s">${r.counts.map(c=>`<i style="opacity:${c?(0.15+0.85*c/r.max).toFixed(2):0.04}"></i>`).join('')}</div></div>`).join('')}
-          <div class="ax"><span>${Y0}</span><span>${Y0+10}</span><span>${Y0+20}</span><span>${y}</span></div></div>
+        <div id="landMap">${pend}</div>
         <h3>Established lines of work · research threads in this field</h3>
         <div class="sub">${useKw?'Keyword-level threads (the field maps mostly to one OpenAlex topic)':'OpenAlex research topics'} · 🔥×N = recent share N× the field average (lines with ≥15 recent papers) · tap to follow</div>
         <div class="who">${lines.map(l=>`<button data-k="${lineKind}" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${fmtN(l.n)} papers · ${fmtN(l.r)} since ${y-2}${growth(l)}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
         <h3>Emerging lines of work · new terms in the latest papers</h3>
-        <div class="sub">Acronyms and phrases frequent in the ${emerging.nRec} newest abstracts (since ${y-1}) but rare in ${emerging.nOld} highly-cited ones from ${y-9}–${y-5}. Tap to add as a topic.</div>
-        <div class="who">${emerging.acr.map(x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`).join('')}${emerging.grams.map(x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
-        <h3>Rising · most cited since ${y-2}</h3>${risingL.map(paperRow).join('')||'<div class="sub">—</div>'}
-        <h3>Punching above weight · recent papers with the highest field-normalized impact</h3>
-        <div class="sub">"×" = citations relative to papers of the same field and age (FWCI). Among ${topN.toLocaleString()} papers since ${y-5} in the field's top 10%.</div>${topByFwci.map(paperRow).join('')||'<div class="sub">—</div>'}
-        <h3>Impact leaders · authors with most top-10% papers since ${y-5}</h3><div class="sub">Tap to follow · quality over volume</div><div class="who">${impAuth.map(([n,e])=>followBtn('author',n,e.n,'top papers')).join('')||'<div class="sub">—</div>'}</div>
-        <h3>Impact leaders · institutions</h3><div class="sub">Tap to follow</div><div class="who">${impInst.map(([n,e])=>followBtn('institution',n,e.n,'top papers')).join('')||'<div class="sub">—</div>'}</div>
+        <div id="landEmerg">${pend}</div>
+        <h3>Rising · most cited since ${y-2}</h3><div id="landRising">${pend}</div>
+        <h3>Punching above weight · recent papers with the highest field-normalized impact</h3><div id="landTop">${pend}</div>
+        <h3>Impact leaders · authors with most top-10% papers since ${y-5}</h3><div class="sub">Tap to follow · quality over volume</div><div id="landImpAuth">${pend}</div>
+        <h3>Impact leaders · institutions</h3><div class="sub">Tap to follow</div><div id="landImpInst">${pend}</div>
         <h3>Foundations · most cited of all time</h3>${foundL.map(paperRow).join('')||'<div class="sub">—</div>'}
-        <h3>Reviews · recent surveys</h3>${reviewsL.map(paperRow).join('')||'<div class="sub">none found</div>'}
+        <h3>Reviews · recent surveys</h3><div id="landReviews">${pend}</div>
         <h3>Who · most prolific authors</h3><div class="sub">By number of papers · tap to follow</div><div class="who">${auth.map(g=>followBtn('author',g.key_display_name,g.count,'papers')).join('')}</div>
         <h3>Where · most prolific institutions</h3><div class="sub">By number of papers · tap to follow</div><div class="who">${inst.map(g=>followBtn('institution',g.key_display_name,g.count,'papers')).join('')}</div>
         <h3>Neighbours · related keywords</h3><div class="sub">Tap to add as a topic</div><div class="who">${kw.map(g=>followBtn('kw',g.key_display_name,g.count,'papers')).join('')}</div>`;
-      b.querySelectorAll('.who button, .map .r').forEach(btn=>btn.onclick=()=>{
-        const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?(/^[A-Z0-9-]+$/.test(n)?n:n.toLowerCase()):`${k}:${n}`;
-        if(state.topics.includes(t)) return toast('Already in your topics');
-        if(!canAddTopic()) return toast(`Max ${MAX_TOPICS} topics — remove one first`);
-        state.topics.push(t); save(); renderChips(); btn.style.borderColor='var(--ok)'; btn.style.opacity='.6'; toast('Added: '+t);
+      bind(b);
+
+      // Phase 2: the rest fills in as each arrives.
+      P.rising.then(r=>fill('landRising',pick(r,8).map(paperRow).join('')||'<div class="sub">—</div>'));
+      P.reviews.then(r=>fill('landReviews',pick(r,6).map(paperRow).join('')||'<div class="sub">none found</div>'));
+      P.top.then(top=>{
+        const topW=(top.results||[]).filter(onTopic); const topN=(top.meta&&top.meta.count)||topW.length;
+        const tally=(get)=>{ const m=new Map(); for(const w of topW){ const seen=new Set(); for(const n of get(w)){ if(!n||seen.has(n)) continue; seen.add(n); const e=m.get(n)||{n:0,f:0}; e.n++; e.f+=w.fwci||0; m.set(n,e);} } return [...m].sort((a,b)=>b[1].n-a[1].n||b[1].f-a[1].f); };
+        const impAuth=tally(w=>(w.authorships||[]).map(a=>a.author?.display_name)).filter(([n])=>n.toLowerCase()!==selfName).slice(0,10);
+        const impInst=tally(w=>(w.authorships||[]).flatMap(a=>(a.institutions||[]).map(i=>i.display_name))).slice(0,8);
+        const topByFwci=topW.slice().sort((a,b)=>(b.fwci||0)-(a.fwci||0)).slice(0,8);
+        fill('landTop',`<div class="sub">"×" = citations relative to papers of the same field and age (FWCI). Among ${topN.toLocaleString()} papers since ${y-5} in the field's top 10%.</div>`+(topByFwci.map(paperRow).join('')||'<div class="sub">—</div>'));
+        fill('landImpAuth',`<div class="who">${impAuth.map(([n,e])=>followBtn('author',n,e.n,'top papers')).join('')||'<div class="sub">—</div>'}</div>`);
+        fill('landImpInst',`<div class="who">${impInst.map(([n,e])=>followBtn('institution',n,e.n,'top papers')).join('')||'<div class="sub">—</div>'}</div>`);
+      });
+      Promise.all([P.rec,P.old]).then(([rec,old])=>{
+        const recDocs=rec.flatMap(r=>r.results||[]).map(docText), oldDocs=old.flatMap(r=>r.results||[]).map(docText);
+        const em=emergingTerms(recDocs,oldDocs,myTopic);
+        const chip=x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`;
+        fill('landEmerg',`<div class="sub">Acronyms and phrases frequent in the ${em.nRec} newest abstracts (since ${y-1}) but rare in ${em.nOld} highly-cited ones from ${y-9}–${y-5}. Tap to add as a topic.</div><div class="who">${em.acr.map(chip).join('')}${em.grams.map(chip).join('')||'<div class="sub">—</div>'}</div>`);
+      });
+      // Map needs the lines first; one cheap aggregate per line.
+      Promise.all(lines.slice(0,10).map(l=>soft(oaList([...base,`${lineFilter}:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`)))).then(dists=>{
+        const rows=lines.slice(0,10).map((l,i)=>{
+          const byY=new Map((dists[i].group_by||[]).map(g=>[+g.key,g.count]));
+          const counts=[]; for(let yy=Y0;yy<=y;yy++) counts.push(byY.get(yy)||0);
+          const tot=counts.reduce((a,b)=>a+b,0)||1; let cum=0, emerge=y, peak=Y0, pk=-1;
+          counts.forEach((c,k)=>{ cum+=c; if(emerge===y&&cum>=0.05*tot&&c>=2) emerge=Y0+k; if(c>pk){pk=c;peak=Y0+k;} });
+          return Object.assign({},l,{counts,emerge,peak,max:Math.max(1,...counts)});
+        }).sort((a,b)=>a.emerge-b.emerge||b.n-a.n);
+        fill('landMap',`<div class="map">${rows.map(r=>`<div class="r" data-k="${lineKind}" data-n="${esc(r.name)}"><div class="l">${esc(r.name)}<small>since ${r.emerge} · peak ${r.peak} · ${fmtN(r.n)} papers${growth(r)}</small></div><div class="s">${r.counts.map(c=>`<i style="opacity:${c?(0.15+0.85*c/r.max).toFixed(2):0.04}"></i>`).join('')}</div></div>`).join('')||'<div class="sub">—</div>'}<div class="ax"><span>${Y0}</span><span>${Y0+10}</span><span>${Y0+20}</span><span>${y}</span></div></div>`);
+        if(errs.length) fill('landNote',`${total?total.toLocaleString()+' papers indexed on OpenAlex':''}<br><span style="opacity:.7">Some sections unavailable: ${esc(errs[0])}</span>`);
       });
     }catch(e){
       console.warn(e);
