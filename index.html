@@ -83,6 +83,12 @@
   .land .trend div{flex:1;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px;position:relative}
   .land .trend div i{position:absolute;bottom:-16px;left:0;right:0;text-align:center;font-size:9px;color:var(--muted);font-style:normal}
   .land .sub{font-size:12px;color:var(--muted);margin:-4px 0 8px}
+  .map .r{display:flex;align-items:center;gap:8px;margin-bottom:5px;cursor:pointer}
+  .map .r .l{flex:0 0 44%;font-size:12px;line-height:1.25;color:var(--text);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .map .r .l small{display:block;color:var(--muted);font-size:10px}
+  .map .r .s{flex:1;display:flex;gap:1px;height:18px}
+  .map .r .s i{flex:1;background:var(--accent);border-radius:1px;display:block}
+  .map .ax{display:flex;margin-left:calc(44% + 8px);justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px}
   .acct{background:var(--bg);border-radius:12px;padding:12px;font-size:14px;line-height:1.5}
   .acct .em{color:var(--accent);word-break:break-all}
   .lim{font-size:12px;color:var(--accent2);margin-top:6px}
@@ -745,7 +751,17 @@
       const allLines=(linesAll.group_by||[]).filter(g=>g.key_display_name&&!(pt.kind==='field'&&g.key_display_name===pt.name));
       const sumAll=allLines.reduce((a,g)=>a+g.count,0)||1, sumRec=[...recMap.values()].reduce((a,b)=>a+b,0)||1;
       const avgShare=sumRec/sumAll;
-      const lines=allLines.slice(0,14).map(g=>{const r=recMap.get(g.key)||0; return {name:g.key_display_name,n:g.count,r,heat:(r/Math.max(g.count,1))/avgShare};});
+      const lines=allLines.slice(0,14).map(g=>{const r=recMap.get(g.key)||0; return {id:String(g.key).replace('https://openalex.org/',''),name:g.key_display_name,n:g.count,r,heat:(r/Math.max(g.count,1))/avgShare};});
+      // Map: per-line year distribution (one cheap aggregate call each) → ordered oldest-emerging to newest.
+      const Y0=y-29;
+      const dists=await Promise.all(lines.slice(0,10).map(l=>soft(oaList([...base,`primary_topic.id:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`))));
+      const mapRows=lines.slice(0,10).map((l,i)=>{
+        const byY=new Map((dists[i].group_by||[]).map(g=>[+g.key,g.count]));
+        const counts=[]; for(let yy=Y0;yy<=y;yy++) counts.push(byY.get(yy)||0);
+        const tot=counts.reduce((a,b)=>a+b,0)||1; let cum=0, emerge=y, peak=Y0, pk=-1;
+        counts.forEach((c,k)=>{ cum+=c; if(emerge===y&&cum>=0.05*tot&&c>=2) emerge=Y0+k; if(c>pk){pk=c;peak=Y0+k;} });
+        return Object.assign({},l,{counts,emerge,peak,max:Math.max(1,...counts)});
+      }).sort((a,b)=>a.emerge-b.emerge||b.n-a.n);
       // Same keyword-proximity check as the feed, so "space" + "weather" scattered in an abstract doesn't count.
       const onTopic=w=>relevant({title:w.display_name||w.title||'',summary:deinvert(w.abstract_inverted_index),authors:(w.authorships||[]).map(a=>a.author?.display_name||''),src:'OpenAlex'},topic);
       const pick=(r,n)=>(r.results||[]).filter(onTopic).slice(0,n);
@@ -765,6 +781,10 @@
         <h3>Trend · papers per year</h3>
         <div class="trend">${yrs.map(g=>`<div style="height:${Math.round(100*g.n/max)}%" title="${g.y}: ${g.n}"><i>${String(g.y).slice(2)}</i></div>`).join('')}</div>
         <div style="height:14px"></div>
+        <h3>Map · lines of work, oldest to newest</h3>
+        <div class="sub">Each row is a research thread; shading = papers per year since ${Y0}. Ordered by when the thread emerged. Tap to follow.</div>
+        <div class="map">${mapRows.map(r=>`<div class="r" data-k="field" data-n="${esc(r.name)}"><div class="l">${esc(r.name)}<small>since ${r.emerge} · peak ${r.peak} · ${Math.round(100*r.n/sumAll)}%${r.heat>1.3?' 🔥':''}</small></div><div class="s">${r.counts.map(c=>`<i style="opacity:${c?(0.15+0.85*c/r.max).toFixed(2):0.04}"></i>`).join('')}</div></div>`).join('')}
+          <div class="ax"><span>${Y0}</span><span>${Y0+10}</span><span>${Y0+20}</span><span>${y}</span></div></div>
         <h3>Lines of work · research threads in this field</h3>
         <div class="sub">Share of all papers · 🔥 = growing faster than the field since ${y-2} · tap to follow</div>
         <div class="who">${lines.map(l=>`<button data-k="field" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${Math.round(100*l.n/sumAll)}%${l.heat>1.3?' 🔥':l.heat<0.6?' ·cooling':''}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
@@ -778,11 +798,11 @@
         <h3>Who · most prolific authors</h3><div class="sub">By number of papers · tap to follow</div><div class="who">${auth.map(g=>followBtn('author',g.key_display_name,g.count,'papers')).join('')}</div>
         <h3>Where · most prolific institutions</h3><div class="sub">By number of papers · tap to follow</div><div class="who">${inst.map(g=>followBtn('institution',g.key_display_name,g.count,'papers')).join('')}</div>
         <h3>Neighbours · related keywords</h3><div class="sub">Tap to add as a topic</div><div class="who">${kw.map(g=>followBtn('kw',g.key_display_name,g.count,'papers')).join('')}</div>`;
-      b.querySelectorAll('.who button').forEach(btn=>btn.onclick=()=>{
+      b.querySelectorAll('.who button, .map .r').forEach(btn=>btn.onclick=()=>{
         const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?n.toLowerCase():`${k}:${n}`;
         if(state.topics.includes(t)) return toast('Already in your topics');
         if(!canAddTopic()) return toast(`Max ${MAX_TOPICS} topics — remove one first`);
-        state.topics.push(t); save(); renderChips(); btn.style.borderColor='var(--ok)'; toast('Added: '+t);
+        state.topics.push(t); save(); renderChips(); btn.style.borderColor='var(--ok)'; btn.style.opacity='.6'; toast('Added: '+t);
       });
     }catch(e){
       console.warn(e);
