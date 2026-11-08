@@ -409,7 +409,7 @@
 
   // A selected chip shows only that topic; "All" shows every topic interleaved.
   function activeTopics(){ return mode==='saved'?[]:(state.active&&state.topics.includes(state.active)?[state.active]:state.topics); }
-  const shown=new Set(), shownKeys=new Set(); let failures={}, lastError=null;
+  const shown=new Set(), shownKeys=new Set(); let failures={}, lastError=null, okStreams=0;
   const allExhausted=()=>activeTopics().every(t=>enabledSources().every(src=>exhausted[streamKey(t,src)]));
 
   // Fetch every topic × source in parallel; hand papers to onItems as each stream answers.
@@ -417,13 +417,13 @@
     const topics=activeTopics(), srcs=enabledSources();
     if(!topics.length||!srcs.length) return 0;
     const streams=[]; for(const t of topics) for(const src of srcs) streams.push([t,src]);
-    let total=0, pending=streams.length; lastError=null;
+    let total=0, pending=streams.length; lastError=null; okStreams=0;
     const label=()=>showLoader(`Searching ${topics.length} topic${topics.length>1?'s':''} on ${srcs.length} source${srcs.length>1?'s':''}… (${pending} left)`);
     label();
     await Promise.all(streams.map(async([t,src])=>{
       const k=streamKey(t,src); buffers[k]=buffers[k]||[];
       for(let hop=0; hop<8 && buffers[k].length<4 && !exhausted[k]; hop++){
-        try{ const got=await fetchStream(t,src); failures[k]=0;
+        try{ const got=await fetchStream(t,src); failures[k]=0; okStreams++;
           buffers[k].push(...got.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t))); }
         catch(e){ console.warn(src,e); lastError=e; if(e.quota){ exhausted[k]=true; break; } failures[k]=(failures[k]||0)+1; if(failures[k]>=2){ exhausted[k]=true; } break; }
       }
@@ -491,7 +491,7 @@
         if(!feed.querySelector('.card')){
           feed.innerHTML=mode==='saved'
             ?`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`
-            :(quotaHit&&Date.now()<quotaHit?quotaMsg():allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:lastError?`<div class="empty">Couldn't reach the paper databases right now.<br>Tap <b>↻</b> to try again in a moment.</div>`:caughtUpMsg());
+            :(quotaHit&&Date.now()<quotaHit?quotaMsg():allDone?`<div class="empty">Nothing found for these topics.<br>Tap <b>Topics</b> to add keywords, or try a broader term.</div>`:(lastError&&!okStreams)?`<div class="empty">Couldn't reach the paper databases right now.<br>Tap <b>↻</b> to try again in a moment.<br><br><span style="font-size:12px;opacity:.7">${esc(String(lastError.message||lastError))}</span><br><br><button id="resetSeenInline">Reset "seen" history</button></div>`:caughtUpMsg());
           const rs=$('#resetSeenInline'); if(rs) rs.onclick=()=>{state.seen={};save();toast('Seen history cleared');resetFeed();};
         } else if(mode!=='saved' && quotaHit&&Date.now()<quotaHit && !feed.querySelector('.end')){
           const d=document.createElement('div');d.className='empty end';d.innerHTML=quotaMsg();feed.appendChild(d);
@@ -516,7 +516,11 @@
     if(mode!=='saved' && feed.scrollTop+feed.clientHeight>feed.scrollHeight-feed.clientHeight*1.5) loadMore();
   },{passive:true});
   const io=new IntersectionObserver(es=>es.forEach(e=>{
-    if(e.isIntersecting && e.intersectionRatio>.6){ const id=e.target.dataset.id; if(id&&!state.seen[id]){state.seen[id]=1; if(Object.keys(state.seen).length>3000){state.seen={};} save();} }
+    const el=e.target;
+    if(e.isIntersecting && e.intersectionRatio>.6){
+      clearTimeout(el._seenT);
+      el._seenT=setTimeout(()=>{ const id=el.dataset.id; if(id&&!state.seen[id]){state.seen[id]=1; if(Object.keys(state.seen).length>3000){state.seen={};} save();} },1500);
+    } else clearTimeout(el._seenT);
   }),{root:feed,threshold:[.6]});
   new MutationObserver(ms=>ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.classList?.contains('card')) io.observe(n)}))).observe(feed,{childList:true});
 
