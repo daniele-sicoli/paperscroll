@@ -42,8 +42,8 @@
   .abs{font-size:15.5px;line-height:1.55;color:#cdd5e3;flex:1;overflow:hidden;position:relative}
   .abs.clamp{display:-webkit-box;-webkit-line-clamp:12;-webkit-box-orient:vertical}
   .more{align-self:flex-start;background:none;color:var(--accent);padding:4px 0;font-size:14px}
-  .actions{display:flex;gap:8px;margin-top:4px}
-  .actions a,.actions button{flex:1;text-align:center;text-decoration:none;color:var(--text);background:var(--card2);border-radius:12px;padding:11px 8px;font-size:14px;font-weight:600}
+  .actions{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
+  .actions a,.actions button{flex:1 1 60px;text-align:center;text-decoration:none;color:var(--text);background:var(--card2);border-radius:12px;padding:11px 6px;font-size:13.5px;font-weight:600}
   .actions .saved{background:#1f3a2a;color:var(--ok)}
   .kw{font-size:12px;color:var(--muted)}
   .empty{padding:60px 24px;text-align:center;color:var(--muted);line-height:1.6}
@@ -575,6 +575,7 @@
         <a href="${esc(p.url)}" target="_blank" rel="noopener">Open</a>
         ${p.pdf?`<a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a>`:''}
         <button class="save ${isSaved?'saved':''}">${isSaved?'Saved ✓':'Save'}</button>
+        <button class="bib" title="Copy BibTeX">BibTeX</button>
         <button class="share">Copy</button>
       </div>`;
     const abs=el.querySelector('.abs'), more=el.querySelector('.more');
@@ -583,6 +584,10 @@
       if(state.saved[p.id]){delete state.saved[p.id];ev.target.className='save';ev.target.textContent='Save';toast('Removed');}
       else{state.saved[p.id]=p;ev.target.className='save saved';ev.target.textContent='Saved ✓';toast('Saved');}
       save();
+    };
+    el.querySelector('.bib').onclick=()=>{
+      const bib=toBibTeX([p]);
+      (navigator.clipboard?.writeText(bib)||Promise.reject()).then(()=>toast('BibTeX copied — paste into Zotero (File → Import from Clipboard) or your .bib')).catch(()=>shareOrDownload('paper.bib',bib,'application/x-bibtex'));
     };
     el.querySelector('.share').onclick=()=>{
       const txt=p.title+'\n'+p.url;
