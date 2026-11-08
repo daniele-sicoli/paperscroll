@@ -646,13 +646,16 @@
     stopSpeaking();
     const seq=speakSeq, plan=speechPlan(p), voice=pickVoice();
     speakingEl=el; el.querySelector('.listen').textContent='⏹ Stop';
+    if(autoplay) setMediaSession(p);
     let i=0;
     const next=()=>{
       if(seq!==speakSeq) return;
       if(i>=plan.length){ if(autoplay){ advanceAutoplay(el); } else stopSpeaking(); return; }
       const step=plan[i++];
       const u=new SpeechSynthesisUtterance(step.text); u.lang='en-US'; u.rate=step.rate; u.pitch=step.pitch; if(voice) u.voice=voice;
-      u.onend=()=>{ if(seq===speakSeq) speakTimer=setTimeout(next,step.pause); };
+      let ended=false; const done=()=>{ if(ended) return; ended=true; if(seq===speakSeq) speakTimer=setTimeout(next,step.pause); };
+      u.onend=done;
+      const est=Math.max(1500,step.text.length*75/step.rate+step.pause+1500); setTimeout(()=>{ if(!ended&&seq===speakSeq&&!speechSynthesis.speaking){ done(); } },est);
       u.onerror=()=>{ if(seq===speakSeq) speakTimer=setTimeout(next,200); };
       try{ speechSynthesis.speak(u); }catch(e){ toast('Speech not available in this browser'); stopSpeaking(); }
     };
@@ -662,6 +665,40 @@
   }
   // ---------- play all ----------
   let autoplay=false;
+  // Background playback: a silent looping track makes iOS treat the page as a media player, so the
+  // audio session (and the speech) survives screen lock, and Media Session puts the paper on the lock screen.
+  let bgAudio=null;
+  function silentWav(seconds=3,rate=8000){
+    const n=seconds*rate, buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
+    const str=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};
+    str(0,'RIFF'); v.setUint32(4,36+n*2,true); str(8,'WAVE'); str(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+    v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); str(36,'data'); v.setUint32(40,n*2,true);
+    return URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));
+  }
+  function bgStart(){
+    try{
+      if(!bgAudio){ bgAudio=new Audio(silentWav()); bgAudio.loop=true; bgAudio.volume=0.01; bgAudio.setAttribute('playsinline',''); }
+      const pr=bgAudio.play(); if(pr&&pr.catch) pr.catch(()=>{});
+    }catch(e){}
+  }
+  function bgStop(){ try{ bgAudio&&bgAudio.pause(); }catch(e){} }
+  function setMediaSession(p){
+    if(!('mediaSession' in navigator)) return;
+    try{
+      navigator.mediaSession.metadata=new MediaMetadata({title:p.title,artist:(p.authors||[]).slice(0,3).join(', ')||'PaperScroll',album:p.cat||'PaperScroll'});
+      navigator.mediaSession.playbackState='playing';
+    }catch(e){}
+  }
+  function initMediaSession(){
+    if(!('mediaSession' in navigator)) return;
+    const h=(a,f)=>{ try{ navigator.mediaSession.setActionHandler(a,f); }catch(e){} };
+    h('play',()=>{ if(!autoplay) setAutoplay(true); else if(speakingEl&&speakingEl._paper) speak(speakingEl,speakingEl._paper); });
+    h('pause',()=>setAutoplay(false));
+    h('stop',()=>setAutoplay(false));
+    h('nexttrack',()=>{ if(speakingEl) advanceAutoplay(speakingEl); else { const c=visibleCard(); if(c) advanceAutoplay(c); } });
+    h('previoustrack',()=>{ const cur=speakingEl||visibleCard(); let prv=cur&&cur.previousElementSibling; while(prv&&!prv.classList.contains('card')) prv=prv.previousElementSibling; if(prv){ stopSpeaking(); autoScrolling=true; feed.scrollTo({top:prv.offsetTop,behavior:'smooth'}); setTimeout(()=>{autoScrolling=false; if(prv._paper) speak(prv,prv._paper);},700); } });
+  }
+  initMediaSession();
   const btnPlay=$('#btnPlay');
   const visibleCard=()=>{ const cards=[...feed.querySelectorAll('.card')]; const top=feed.scrollTop; let best=null,bd=1e9; for(const c of cards){ const d=Math.abs(c.offsetTop-top); if(d<bd){bd=d;best=c;} } return best; };
   // Keep the screen awake while playing (Screen Wake Lock API); released on pause or when the tab is hidden.
@@ -670,7 +707,7 @@
   function releaseWake(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
   function setAutoplay(on){
     autoplay=on; btnPlay.textContent=on?'⏸':'▶︎'; btnPlay.style.background=on?'var(--accent)':''; btnPlay.style.color=on?'#06101f':'';
-    if(on) holdWake(); else releaseWake();
+    if(on){ holdWake(); bgStart(); } else { releaseWake(); bgStop(); try{ if('mediaSession' in navigator) navigator.mediaSession.playbackState='paused'; }catch(e){} }
     if(on){ const c=visibleCard(); if(c&&c._paper) speak(c,c._paper); else toast('Nothing to read yet'); }
     else stopSpeaking();
   }
@@ -689,7 +726,7 @@
   feed.addEventListener('scroll',()=>{ if(!autoplay||autoScrolling) return; clearTimeout(swipeT); swipeT=setTimeout(()=>{ const c=visibleCard(); if(c&&c!==speakingEl&&c._paper) speak(c,c._paper); },350); },{passive:true});
 
   // stop when the card leaves the screen or the user navigates away
-  document.addEventListener('visibilitychange',()=>{ if(document.hidden){ if(autoplay) setAutoplay(false); else stopSpeaking(); } });
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden){ if(!autoplay) stopSpeaking(); } else if(autoplay){ holdWake(); } });
 
   // ---------- render ----------
   function card(p){
