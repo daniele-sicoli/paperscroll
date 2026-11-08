@@ -70,6 +70,19 @@
   .seg button.on{background:var(--accent);color:#06101f}
   .toast{position:fixed;left:50%;bottom:calc(24px + var(--sab));transform:translateX(-50%);background:#263246;color:var(--text);padding:10px 14px;border-radius:12px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30;pointer-events:none;max-width:90vw;text-align:center}
   .toast.show{opacity:1}
+  .land h2{display:flex;align-items:center;gap:8px}
+  .land h3{font-size:13px;color:var(--accent2);text-transform:uppercase;letter-spacing:.6px;margin:18px 0 8px}
+  .land .it{display:block;padding:9px 10px;background:var(--bg);border-radius:10px;margin-bottom:6px;text-decoration:none;color:var(--text)}
+  .land .it .t{font-size:14px;line-height:1.35;font-weight:600}
+  .land .it .m{font-size:12px;color:var(--muted);margin-top:3px}
+  .land .who{display:flex;flex-wrap:wrap;gap:6px}
+  .land .who button{font-size:13px;padding:7px 10px;background:var(--bg);border:1px solid #2a3449}
+  .land .who button b{color:var(--accent);font-weight:600}
+  .land .who button span{color:var(--muted);font-size:11px;margin-left:5px}
+  .land .trend{display:flex;align-items:flex-end;gap:3px;height:70px;padding:0 2px}
+  .land .trend div{flex:1;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px;position:relative}
+  .land .trend div i{position:absolute;bottom:-16px;left:0;right:0;text-align:center;font-size:9px;color:var(--muted);font-style:normal}
+  .land .sub{font-size:12px;color:var(--muted);margin:-4px 0 8px}
   .acct{background:var(--bg);border-radius:12px;padding:12px;font-size:14px;line-height:1.5}
   .acct .em{color:var(--accent);word-break:break-all}
   .lim{font-size:12px;color:var(--accent2);margin-top:6px}
@@ -79,6 +92,7 @@
 <header>
   <div class="row">
     <h1>Paper<span>Scroll</span></h1>
+    <button class="icon" id="btnLand" title="Landscape">📊</button>
     <button class="icon" id="btnAccount" title="Account">👤</button>
     <button class="icon" id="btnSaved" title="Saved">🔖</button>
     <button class="icon" id="btnRefresh" title="Refresh">↻</button>
@@ -135,6 +149,14 @@
       <button id="clearSeen" style="flex:1">Reset "seen" history</button>
       <button class="primary" id="closeSheet" style="flex:1">Done</button>
     </div>
+  </div>
+</div>
+
+<div class="sheet" id="landSheet">
+  <div class="panel land" style="max-height:92dvh">
+    <h2 id="landTitle">Landscape</h2>
+    <div id="landBody"></div>
+    <div class="row" style="margin-top:16px"><button class="primary" id="closeLand" style="flex:1">Done</button></div>
   </div>
 </div>
 
@@ -595,8 +617,9 @@
     renderLimit();
     const l=$('#topicList');l.innerHTML='';
     state.topics.forEach((t,i)=>{
-      const d=document.createElement('div');d.innerHTML=`<span>${esc(t)}</span><b title="Remove">✕</b>`;
-      d.querySelector('b').onclick=()=>{state.topics.splice(i,1);if(state.active===t)state.active=null;save();renderTopicList();};
+      const d=document.createElement('div');d.innerHTML=`<span>${esc(t)}</span><b title="Landscape" style="color:var(--accent)">📊</b><b title="Remove">✕</b>`;
+      d.querySelectorAll('b')[0].onclick=()=>{sheet.classList.remove('open');openLandscape(t);};
+      d.querySelectorAll('b')[1].onclick=()=>{state.topics.splice(i,1);if(state.active===t)state.active=null;save();renderTopicList();};
       l.appendChild(d);
     });
   }
@@ -627,6 +650,74 @@
   let lastRefresh=0;
   $('#btnRefresh').onclick=()=>{const now=Date.now(); if(now-lastRefresh<MIN_REFRESH_MS){toast(`Easy — refresh again in ${Math.ceil((MIN_REFRESH_MS-(now-lastRefresh))/1000)} s`);return;} lastRefresh=now; quotaHit=null;mode='feed';renderChips();resetFeed();toast('Refreshed');};
   $('#btnSaved').onclick=()=>{mode=mode==='saved'?'feed':'saved';renderChips();resetFeed();};
+
+  // ---------- landscape: state of the art for a topic ----------
+  const landSheet=$('#landSheet');
+  $('#closeLand').onclick=()=>landSheet.classList.remove('open');
+  landSheet.addEventListener('click',e=>{if(e.target===landSheet)landSheet.classList.remove('open')});
+  $('#btnLand').onclick=()=>{ if(state.active&&state.topics.includes(state.active)) openLandscape(state.active); else toast('Select a topic chip first, then tap 📊'); };
+
+  async function oaTopicFilters(topic){
+    const pt=parseTopic(topic); const f=[];
+    if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); f.push(KINDS[pt.kind].oaFilter+':'+e.id); }
+    if(pt.kw) f.push('title_and_abstract.search:'+encodeURIComponent(searchTerm(pt.kw)));
+    return f;
+  }
+  const oaExtra=()=>(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
+  const oaList=(filters,params)=>getJSON(`https://api.openalex.org/works?filter=${filters.join(',')}&${params}${oaExtra()}`,{quota:true});
+  const paperRow=w=>{
+    const loc=w.primary_location||{}; const url=loc.landing_page_url||w.doi||w.id;
+    const a=(w.authorships||[]).map(x=>x.author?.display_name).filter(Boolean); const au=a.length>2?a[0]+' et al.':a.join(', ');
+    return `<a class="it" href="${esc(url)}" target="_blank" rel="noopener"><div class="t">${esc(w.display_name||w.title||'Untitled')}</div><div class="m">${(w.publication_date||'').slice(0,4)} · ${w.cited_by_count||0} cites${au?' · '+esc(au):''}${loc.source?.display_name?' · '+esc(loc.source.display_name):''}</div></a>`;
+  };
+  function followBtn(kind,name,count,label){ return `<button data-k="${kind}" data-n="${esc(name)}"><b>${esc(name)}</b><span>${count} ${label}</span></button>`; }
+
+  async function openLandscape(topic){
+    const pt=parseTopic(topic); const title=pt.kind?`${KINDS[pt.kind].icon} ${pt.name}${pt.kw?' · '+pt.kw:''}`:topic;
+    $('#landTitle').textContent='Landscape: '+title; const b=$('#landBody');
+    b.innerHTML=`<div class="loader"><span class="spin"></span>Mapping the field…</div>`; landSheet.classList.add('open');
+    try{
+      const base=await oaTopicFilters(topic);
+      const sel='id,doi,display_name,title,publication_date,authorships,primary_location,cited_by_count';
+      const y=new Date().getFullYear();
+      const [found,rising,reviews,authors,insts,years,kws]=await Promise.all([
+        oaList(base,`sort=cited_by_count:desc&per-page=8&select=${sel}`),
+        oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=8&select=${sel}`),
+        oaList([...base,'type:review'],`sort=publication_date:desc&per-page=6&select=${sel}`),
+        oaList(base,`group_by=authorships.author.id&per-page=12`),
+        oaList(base,`group_by=authorships.institutions.id&per-page=10`),
+        oaList([...base,`from_publication_year:${y-14}`],`group_by=publication_year&per-page=20`),
+        oaList(base,`group_by=keywords.id&per-page=14`)
+      ]);
+      const total=(found.meta&&found.meta.count)||0;
+      const yrs=(years.group_by||[]).map(g=>({y:+g.key,n:g.count})).filter(g=>g.y>=y-14&&g.y<=y).sort((a,b)=>a.y-b.y);
+      const max=Math.max(1,...yrs.map(g=>g.n));
+      const selfName=pt.kind==='author'?pt.name.toLowerCase():'';
+      const auth=(authors.group_by||[]).filter(g=>g.key_display_name&&g.key_display_name.toLowerCase()!==selfName).slice(0,10);
+      const inst=(insts.group_by||[]).filter(g=>g.key_display_name).slice(0,8);
+      const kw=(kws.group_by||[]).filter(g=>g.key_display_name&&!(pt.kw||'').toLowerCase().includes(g.key_display_name.toLowerCase())).slice(0,12);
+      b.innerHTML=`
+        <div class="sub">${total.toLocaleString()} papers indexed on OpenAlex${pt.kind?'':' matching this topic'}</div>
+        <h3>Trend · papers per year</h3>
+        <div class="trend">${yrs.map(g=>`<div style="height:${Math.round(100*g.n/max)}%" title="${g.y}: ${g.n}"><i>${String(g.y).slice(2)}</i></div>`).join('')}</div>
+        <div style="height:14px"></div>
+        <h3>Rising · most cited since ${y-2}</h3>${(rising.results||[]).map(paperRow).join('')||'<div class="sub">—</div>'}
+        <h3>Foundations · most cited of all time</h3>${(found.results||[]).map(paperRow).join('')||'<div class="sub">—</div>'}
+        <h3>Reviews · recent surveys</h3>${(reviews.results||[]).map(paperRow).join('')||'<div class="sub">none found</div>'}
+        <h3>Who · leading authors</h3><div class="sub">Tap to follow</div><div class="who">${auth.map(g=>followBtn('author',g.key_display_name,g.count,'papers')).join('')}</div>
+        <h3>Where · leading institutions</h3><div class="sub">Tap to follow</div><div class="who">${inst.map(g=>followBtn('institution',g.key_display_name,g.count,'papers')).join('')}</div>
+        <h3>Neighbours · related keywords</h3><div class="sub">Tap to add as a topic</div><div class="who">${kw.map(g=>followBtn('kw',g.key_display_name,g.count,'papers')).join('')}</div>`;
+      b.querySelectorAll('.who button').forEach(btn=>btn.onclick=()=>{
+        const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?n.toLowerCase():`${k}:${n}`;
+        if(state.topics.includes(t)) return toast('Already in your topics');
+        if(!canAddTopic()) return toast(`Max ${MAX_TOPICS} topics — remove one first`);
+        state.topics.push(t); save(); renderChips(); btn.style.borderColor='var(--ok)'; toast('Added: '+t);
+      });
+    }catch(e){
+      console.warn(e);
+      b.innerHTML=`<div class="empty">${e.quota?quotaMsg():`Couldn't build the landscape right now.<br><span style="font-size:12px;opacity:.7">${esc(e.message||e)}</span>`}</div>`;
+    }
+  }
 
   // ---------- account / sync ----------
   const acctSheet=$('#acctSheet');
