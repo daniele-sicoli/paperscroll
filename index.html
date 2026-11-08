@@ -137,9 +137,14 @@
       <button data-v="s2">Semantic Scholar</button>
       <button data-v="crossref">Crossref</button>
       <button data-v="epmc">Europe PMC</button>
+      <button data-v="ads">NASA ADS</button>
     </div>
-    <div class="hint">OpenAlex and Crossref cover all fields; Semantic Scholar is strongest in CS, physics and engineering; Europe PMC is life sciences and medicine. Duplicates across sources are merged.</div>
+    <div class="hint">OpenAlex and Crossref cover all fields; Semantic Scholar is strongest in CS, physics and engineering; Europe PMC is life sciences and medicine; NASA ADS is the reference database for astrophysics, space physics and planetary science (needs the free token below). Duplicates across sources are merged.</div>
 
+
+    <label>NASA ADS API token (needed for the ADS source)</label>
+    <input id="adsKey" type="password" placeholder="Paste your free ADS token" autocomplete="off">
+    <div class="hint">Free: sign in at <a href="https://ui.adsabs.harvard.edu/user/settings/token" target="_blank" rel="noopener" style="color:var(--accent)">ui.adsabs.harvard.edu → Settings → API Token</a>. 5,000 queries/day. Stays on this device only.</div>
 
     <label>OpenAlex API key (optional)</label>
     <input id="oaKey" type="password" placeholder="Paste your free key for 10× the daily search quota" autocomplete="off">
@@ -218,14 +223,14 @@
   const cachePut=(k,d)=>{try{localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}))}catch(e){/* storage full: drop the page cache and retry once */ try{Object.keys(localStorage).filter(x=>x.startsWith('oa:')).forEach(x=>localStorage.removeItem(x)); localStorage.setItem('oa:'+k,JSON.stringify({t:Date.now(),d}));}catch(_){}}};
   class QuotaError extends Error{constructor(){super('quota');this.quota=true}}
   async function getJSON(url,opts={}){
-    const key=url.replace(/[?&]api_key=[^&]*/,'');
+    const key=url.replace(/[?&]api_key=[^&]*/,'')+(opts.headers?'#auth':'');
     const c=cacheGet(key); if(c) return c;
     if(opts.quota&&quotaHit&&Date.now()<quotaHit) throw new QuotaError();
     let err;
     for(let i=0;i<3;i++){
       try{
         const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),15000);
-        const res=await fetch(url,{cache:'no-store',signal:ctl.signal}).finally(()=>clearTimeout(tm));
+        const res=await fetch(url,{cache:'no-store',signal:ctl.signal,headers:opts.headers||{}}).finally(()=>clearTimeout(tm));
         if(res.status===429){
           // Declare the daily budget exhausted only when OpenAlex says so (body or headers);
           // a burst 429 (per-second limit) is free and just needs a short back-off.
@@ -419,6 +424,33 @@
         return {items, next};
       }}
   };
+  SOURCES.ads={ label:'NASA ADS',
+    async fetch(topic,cur){
+      if(!state.adsKey) return {items:[],next:null};
+      const pt=parseTopic(topic); const q=[];
+      if(pt.kw){ q.push(hasOps(pt.kw)?`abs:(${pt.kw})`:`abs:(${keywords(pt.kw).join(' ')})`); }
+      if(pt.kind==='author'){ const parts=pt.name.trim().split(/\s+/); const last=parts.pop(); q.push(`author:"${last}${parts.length?', '+parts.join(' '):''}"`); }
+      if(pt.kind==='institution') q.push(`aff:"${pt.name}"`);
+      if(pt.kind==='journal') q.push(`pub:"${pt.name}"`);
+      if(!q.length) return {items:[],next:null};
+      const sort={submittedDate:'date desc',lastUpdatedDate:'citation_count desc',relevance:'score desc'}[state.sort];
+      const start=cur||0;
+      const fl='bibcode,title,author,abstract,pubdate,doi,citation_count,pub,identifier,doctype';
+      const url=`https://api.adsabs.harvard.edu/v1/search/query?q=${encodeURIComponent(q.join(' AND ')+' AND abstract:*')}&fl=${fl}&rows=${PER}&start=${start}&sort=${encodeURIComponent(sort)}`;
+      const data=await getJSON(url,{headers:{Authorization:'Bearer '+state.adsKey}});
+      const docs=data.response?.docs||[];
+      const items=docs.map(d=>{
+        const arx=(d.identifier||[]).map(x=>/^arXiv:(.+)$/i.exec(x)).find(Boolean)?.[1];
+        const doi=(d.doi||[])[0]||'';
+        const pub=(d.pubdate||'').replace(/-00/g,'-01');
+        return { id:'ads:'+d.bibcode, doi, url:`https://ui.adsabs.harvard.edu/abs/${d.bibcode}/abstract`,
+          pdf:arx?`https://arxiv.org/pdf/${arx}`:'',
+          title:(d.title||['Untitled'])[0], summary:d.abstract||'',
+          authors:(d.author||[]).map(a=>{const m=/^([^,]+),\s*(.+)$/.exec(a);return m?`${m[2]} ${m[1]}`:a;}),
+          published:pub, cat:arx&&/eprint/i.test(d.doctype||'')?'arXiv':(d.pub||d.doctype||''), cites:d.citation_count||0, src:'NASA ADS' };
+      });
+      return {items, next:(docs.length<PER||start+PER>=2000)?null:start+PER};
+    }};
   const DEFAULT_SOURCES=['openalex','s2','crossref'];
   const enabledSources=()=>(state.sources&&state.sources.length?state.sources:DEFAULT_SOURCES).filter(k=>SOURCES[k]);
 
@@ -644,9 +676,9 @@
   }
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
-  function renderSrcSeg(){ const en=enabledSources(); [...$('#srcSeg').children].forEach(b=>{ b.classList.toggle('on',en.includes(b.dataset.v)); b.onclick=()=>{ let cur=enabledSources().slice(); if(cur.includes(b.dataset.v)){ if(cur.length===1){toast('Keep at least one source');return;} cur=cur.filter(x=>x!==b.dataset.v);} else cur.push(b.dataset.v); state.sources=cur; save(); renderSrcSeg(); }; }); }
-  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');sheet.classList.add('open');};
-  const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
+  function renderSrcSeg(){ const en=enabledSources(); [...$('#srcSeg').children].forEach(b=>{ b.classList.toggle('on',en.includes(b.dataset.v)); b.onclick=()=>{ let cur=enabledSources().slice(); if(cur.includes(b.dataset.v)){ if(cur.length===1){toast('Keep at least one source');return;} cur=cur.filter(x=>x!==b.dataset.v);} else { if(b.dataset.v==='ads'&&!($('#adsKey').value.trim()||state.adsKey)){ toast('Paste your NASA ADS token below first'); $('#adsKey').focus(); return; } cur.push(b.dataset.v); } state.sources=cur; save(); renderSrcSeg(); }; }); }
+  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';$('#adsKey').value=state.adsKey||'';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');sheet.classList.add('open');};
+  const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} const a=$('#adsKey').value.trim(); if(a!==(state.adsKey||'')){state.adsKey=a; SS('ps_state',state);} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
   $('#closeSheet').onclick=closeSheet;
   sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
   $('#clearSeen').onclick=()=>{state.seen={};save();toast('Seen history cleared');};
