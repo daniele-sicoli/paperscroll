@@ -127,7 +127,7 @@
     </div>
   </div>
   <div class="row" id="searchRow" style="margin-top:8px">
-    <input id="searchInput" type="search" placeholder="🔍 Search papers — words, authors, titles…" autocomplete="off" style="flex:1;padding:9px 12px">
+    <input id="searchInput" type="search" placeholder="🔍 Search papers — words, authors, or paste an arXiv/DOI link" autocomplete="off" style="flex:1;padding:9px 12px">
     <button id="searchGo">Go</button>
   </div>
   <div class="chips" id="chips"></div>
@@ -170,8 +170,9 @@
       <button data-v="crossref">Crossref</button>
       <button data-v="epmc">Europe PMC</button>
       <button data-v="ads">NASA ADS</button>
+      <button data-v="social">Bluesky &amp; Mastodon</button>
     </div>
-    <div class="hint">OpenAlex and Crossref cover all fields; Semantic Scholar is strongest in CS, physics and engineering; Europe PMC is life sciences and medicine; NASA ADS is the reference database for astrophysics, space physics and planetary science (needs the free token below). Duplicates across sources are merged.</div>
+    <div class="hint">OpenAlex and Crossref cover all fields; Semantic Scholar is strongest in CS, physics and engineering; Europe PMC is life sciences and medicine; NASA ADS is the reference database for astrophysics, space physics and planetary science (needs the free token below). Bluesky &amp; Mastodon surfaces papers people are posting about right now (no account needed), ranked by likes and reposts. Duplicates across sources are merged.</div>
 
 
     <label>NASA ADS API token (needed for the ADS source)</label>
@@ -215,6 +216,8 @@
     <h2>Conferences &amp; deadlines</h2>
     <div class="seg" id="confSeg"><button data-v="mine" class="on">Matching my topics</button><button data-v="all">All</button><button data-v="past">Include past</button></div>
     <div id="confBody" style="margin-top:12px"></div>
+    <h3 style="font-size:13px;color:var(--accent2);text-transform:uppercase;letter-spacing:.6px;margin:18px 0 8px">From Bluesky &amp; Mastodon · calls for papers mentioning your topics</h3>
+    <div id="confSocial" class="hint">Loading…</div>
     <label>Add your own</label>
     <div class="row"><input id="confName" placeholder="Conference name"></div>
     <div class="row" style="margin-top:6px"><input id="confDate" type="date" style="flex:1" title="Deadline"><input id="confWhat" placeholder="What (e.g. abstracts)" style="flex:1"></div>
@@ -562,6 +565,104 @@
       });
       return {items, next:(docs.length<PER||start+PER>=2000)?null:start+PER};
     }};
+  // ---------- paper links → papers (used by the social source and by pasted links) ----------
+  const ARX_RE=/arxiv\.org\/(?:abs|pdf|html)\/(\d{4}\.\d{4,5})(?:v\d+)?/gi, ARX_ID_RE=/\b(\d{4}\.\d{4,5})(?:v\d+)?\b/g;
+  const DOI_RE=/\b(10\.\d{4,9}\/[^\s"'<>)\]]+)/gi;
+  const PUB_RE=[[/nature\.com\/articles\/(s\d{5}-\d{3}-\d{5}-[a-z0-9])/gi,'10.1038/$1'],[/link\.springer\.com\/article\/(10\.[^\s"'<>)]+)/gi,'$1'],[/onlinelibrary\.wiley\.com\/doi\/(?:abs\/|full\/|pdf\/)?(10\.[^\s"'<>)]+)/gi,'$1'],[/agupubs\.onlinelibrary\.wiley\.com\/doi\/(?:abs\/|full\/)?(10\.[^\s"'<>)]+)/gi,'$1'],[/iopscience\.iop\.org\/article\/(10\.[^\s"'<>)]+)/gi,'$1'],[/pnas\.org\/doi\/(?:abs\/|full\/)?(10\.[^\s"'<>)]+)/gi,'$1'],[/science\.org\/doi\/(?:abs\/|full\/)?(10\.[^\s"'<>)]+)/gi,'$1']];
+  function extractPaperIds(text){
+    const ids=new Set(); let m;
+    ARX_RE.lastIndex=0; while((m=ARX_RE.exec(text))) ids.add('ARXIV:'+m[1]);
+    DOI_RE.lastIndex=0; while((m=DOI_RE.exec(text))) ids.add('DOI:'+m[1].replace(/[.,;:]+$/,''));
+    for(const [re,tpl] of PUB_RE){ re.lastIndex=0; while((m=re.exec(text))) ids.add('DOI:'+tpl.replace('$1',m[1]).replace(/[.,;:]+$/,'')); }
+    return [...ids];
+  }
+  const resolveCache=new Map();
+  async function resolvePapers(ids){
+    const want=ids.filter(id=>!resolveCache.has(id)); const out=new Map();
+    if(want.length){
+      try{
+        const fields='title,abstract,authors,publicationDate,year,externalIds,openAccessPdf,venue,citationCount,url';
+        const res=await fetch(`https://api.semanticscholar.org/graph/v1/paper/batch?fields=${fields}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:want.slice(0,100)})});
+        if(res.ok){ const arr=await res.json(); arr.forEach((w,i)=>{ if(w) resolveCache.set(want[i],s2Item(w)); else resolveCache.set(want[i],null); }); }
+      }catch(e){ console.warn('resolve',e); }
+      // fallback for DOIs S2 didn't know: OpenAlex
+      const miss=want.filter(id=>!resolveCache.get(id)&&id.startsWith('DOI:')).map(id=>id.slice(4));
+      if(miss.length){
+        try{
+          const sel='id,doi,title,display_name,publication_date,authorships,primary_location,best_oa_location,open_access,abstract_inverted_index,cited_by_count,type';
+          const d=await getJSON(`https://api.openalex.org/works?filter=doi:${encodeURIComponent(miss.slice(0,50).join('|'))}&per-page=50&select=${sel}${oaExtra()}`,{quota:true});
+          for(const w of (d.results||[])){ const key='DOI:'+String(w.doi||'').replace(/^https?:\/\/doi\.org\//,''); const k2=miss.find(x=>x.toLowerCase()===key.slice(4).toLowerCase()); if(k2) resolveCache.set('DOI:'+k2,oaItem(w)); }
+        }catch(e){ console.warn('resolve oa',e); }
+      }
+    }
+    for(const id of ids){ const v=resolveCache.get(id); if(v) out.set(id,Object.assign({},v)); }
+    return out;
+  }
+  function s2Item(w){
+    const doi=w.externalIds?.DOI||''; const arx=w.externalIds?.ArXiv; const jdoi=doi&&!/^10\.48550\//.test(doi);
+    const pdf=w.openAccessPdf?.url||(arx?`https://arxiv.org/pdf/${arx}`:'');
+    return { id:'s2:'+w.paperId, doi, url:jdoi?`https://doi.org/${doi}`:(arx?`https://arxiv.org/abs/${arx}`:w.url), pdf, pdfPre:!!pdf&&/arxiv\.org/.test(pdf),
+      title:(w.title||'Untitled').trim(), summary:w.abstract||'', authors:(w.authors||[]).map(a=>a.name).filter(Boolean),
+      published:w.publicationDate||(w.year?String(w.year):''), cat:arx&&!jdoi?'arXiv':(w.venue||''), cites:w.citationCount||0, src:'Semantic Scholar' };
+  }
+  function oaItem(w){
+    const loc=w.primary_location||{}, boa=w.best_oa_location||{};
+    const landing=(w.doi&&!/10\.48550\//.test(w.doi))?w.doi:(loc.landing_page_url||w.doi||w.id);
+    const pubPdf=[loc,boa].find(l=>l.pdf_url&&l.version==='publishedVersion')?.pdf_url; const anyPdf=loc.pdf_url||boa.pdf_url||w.open_access?.oa_url||'';
+    return { id:'oa:'+w.id.replace('https://openalex.org/',''), doi:w.doi||'', url:landing, pdf:pubPdf||anyPdf, pdfPre:!pubPdf&&!!anyPdf,
+      title:(w.display_name||w.title||'Untitled').trim(), summary:deinvert(w.abstract_inverted_index), authors:(w.authorships||[]).map(a=>a.author?.display_name||'').filter(Boolean),
+      published:w.publication_date||'', cat:/arxiv\.org\/abs\//.test(landing||'')?'arXiv':(loc.source?.display_name||w.type||''), cites:w.cited_by_count||0, src:'OpenAlex' };
+  }
+
+  // ---------- social: Bluesky + Mastodon posts that link to papers ----------
+  const MASTO_INSTANCES=['mastodon.social','fediscience.org','mathstodon.xyz','astrodon.social'];
+  const stripHtml=h=>{ const d=document.createElement('div'); d.innerHTML=h||''; return d.textContent||''; };
+  const linksFromHtml=h=>{ const d=document.createElement('div'); d.innerHTML=h||''; return [...d.querySelectorAll('a')].map(a=>a.getAttribute('href')||''); };
+  async function bskySearch(q,limit=50){
+    const r=await fetch(`https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=${limit}&sort=latest`);
+    if(!r.ok) throw new Error('Bluesky '+r.status);
+    const d=await r.json();
+    return (d.posts||[]).map(p=>{
+      const rec=p.record||{}; const text=rec.text||''; const ext=p.embed?.external?.uri||rec.embed?.external?.uri||'';
+      const links=[ext,...((rec.facets||[]).flatMap(f=>(f.features||[]).map(x=>x.uri||'')))].filter(Boolean);
+      return { net:'Bluesky', text, links, when:rec.createdAt||p.indexedAt, likes:p.likeCount||0, reposts:p.repostCount||0,
+        author:p.author?.displayName||p.author?.handle||'', url:`https://bsky.app/profile/${p.author?.handle}/post/${(p.uri||'').split('/').pop()}` };
+    });
+  }
+  async function mastoTag(instance,tag,limit=40){
+    const r=await fetch(`https://${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=${limit}`);
+    if(!r.ok) throw new Error(instance+' '+r.status);
+    const d=await r.json();
+    return d.map(st=>({ net:'Mastodon', text:stripHtml(st.content), links:[...linksFromHtml(st.content),...((st.card&&st.card.url)?[st.card.url]:[])], when:st.created_at,
+      likes:st.favourites_count||0, reposts:st.reblogs_count||0, author:st.account?.display_name||st.account?.acct||'', url:st.url||st.uri }));
+  }
+  const soft0=p=>p.catch(e=>{ console.warn(e); return []; });
+  async function socialPosts(kw){
+    const words=keywords(kw); const tagCands=[...new Set([words.join(''),...words.filter(w=>w.length>4)])].slice(0,3);
+    const jobs=[ soft0(bskySearch(`${kw} arxiv`)), soft0(bskySearch(`${kw} doi`)), soft0(bskySearch(kw,30)) ];
+    for(const inst of MASTO_INSTANCES){ jobs.push(soft0(mastoTag(inst,'arxiv',40))); for(const t of tagCands) jobs.push(soft0(mastoTag(inst,t,30))); }
+    const all=(await Promise.all(jobs)).flat();
+    const seen=new Set(); return all.filter(p=>{ if(seen.has(p.url)) return false; seen.add(p.url); return true; });
+  }
+  SOURCES.social={ label:'Bluesky & Mastodon',
+    async fetch(topic,cur){
+      if(cur) return {items:[],next:null};
+      const pt=parseTopic(topic); if(pt.kind&&!pt.kw) return {items:[],next:null};
+      const kw=pt.kw||topic;
+      const posts=await socialPosts(kw);
+      // map paper id → aggregated buzz
+      const byId=new Map();
+      for(const po of posts){ const ids=extractPaperIds([po.text,...po.links].join(' ')); for(const id of ids){ const e=byId.get(id)||{buzz:0,posts:[]}; e.buzz+=1+po.likes+2*po.reposts; e.posts.push(po); byId.set(id,e); } }
+      if(!byId.size) return {items:[],next:null};
+      const resolved=await resolvePapers([...byId.keys()].slice(0,80));
+      const items=[]; const seenPaper=new Set();
+      for(const [id,e] of byId){ const paper=resolved.get(id); if(!paper) continue; const k=dedupKey(paper); if(seenPaper.has(k)) continue; seenPaper.add(k);
+        const top=e.posts.sort((a,b)=>(b.likes+2*b.reposts)-(a.likes+2*a.reposts))[0];
+        items.push(Object.assign(paper,{ id:'soc:'+paper.id, src:(top.net==='Bluesky'?'🦋 Bluesky':'🐘 Mastodon'), buzz:e.buzz, postUrl:top.url, postBy:top.author, postWhen:top.when, nPosts:e.posts.length })); }
+      items.sort((a,b)=>b.buzz-a.buzz);
+      return {items,next:null};
+    }};
+
   const DEFAULT_SOURCES=['openalex','s2','crossref'];
   const enabledSources=()=>(state.sources&&state.sources.length?state.sources:DEFAULT_SOURCES).filter(k=>SOURCES[k]);
 
@@ -846,7 +947,7 @@
     const isSaved=!!state.saved[p.id];
     const auth=p.authors.length>6?p.authors.slice(0,6).join(', ')+' … (+'+(p.authors.length-6)+')':p.authors.join(', ');
     el.innerHTML=`
-      <div class="meta">${p.cat?`<span class="tag">${esc(p.cat)}</span>`:''}<span>${fmtDate(p.published)}</span>${p.cites?`<span>· ${p.cites} cites</span>`:''}<span class="kw">· ${esc(mode==='search'?'search':(p.topic||'saved'))}${p.src?` · ${esc(p.src)}`:''}</span></div>
+      <div class="meta">${p.cat?`<span class="tag">${esc(p.cat)}</span>`:''}<span>${fmtDate(p.published)}</span>${p.cites?`<span>· ${p.cites} cites</span>`:''}<span class="kw">· ${esc(mode==='search'?'search':(p.topic||'saved'))}${p.src?` · ${esc(p.src)}`:''}${p.buzz?` · <a href="${esc(p.postUrl||'#')}" target="_blank" rel="noopener" style="color:var(--accent2);text-decoration:none">♥ ${p.buzz} buzz${p.nPosts>1?' · '+p.nPosts+' posts':''}</a>`:''}</span></div>
       <h2 class="ttl">${esc(p.title)}</h2>
       <div class="auth">${esc(auth)}</div>
       <div class="abs clamp">${esc(p.summary||'(no abstract available)')}</div>
@@ -1018,9 +1119,20 @@
 
   // ---------- quick search ----------
   const searchRow=$('#searchRow'), searchInput=$('#searchInput');
-  function runSearch(){
+  async function runSearch(){
     const q=searchInput.value.trim(); if(!q) return;
-    searchQ=q; mode='search'; searchInput.blur();
+    searchInput.blur();
+    // A pasted link or identifier (arXiv id, DOI, publisher URL) resolves straight to the paper.
+    const ids=extractPaperIds(q); if(!ids.length){ let m; ARX_ID_RE.lastIndex=0; if(/^\s*(arxiv:)?\d{4}\.\d{4,5}(v\d+)?\s*$/i.test(q)&&(m=ARX_ID_RE.exec(q))) ids.push('ARXIV:'+m[1]); }
+    if(ids.length){
+      searchQ=q; mode='search'; renderChips(); if(autoplay) setAutoplay(false); stopSpeaking(); gen++; loadingGen=-1; feed.innerHTML=''; shown.clear(); shownKeys.clear(); showLoader('Resolving link…');
+      const my=gen; const res=await resolvePapers(ids); if(my!==gen) return; hideLoader();
+      const items=[...res.values()];
+      if(!items.length){ feed.innerHTML=`<div class="empty">Couldn't find that paper in Semantic Scholar or OpenAlex.<br><span style="font-size:12px;opacity:.7">${esc(ids.join(', '))}</span></div>`; return; }
+      items.forEach(p=>{ shown.add(p.id); shownKeys.add(dedupKey(p)); feed.appendChild(card(Object.assign(p,{topic:'link'}))); });
+      return;
+    }
+    searchQ=q; mode='search';
     renderChips(); resetFeed();
   }
   $('#searchGo').onclick=runSearch;
@@ -1063,7 +1175,28 @@
       </div>`).join('')||`<div class="empty">${confView==='mine'?'No listed conference matches your topics yet — switch to <b>All</b> or add your own below.':'Nothing to show.'}</div>`;
     b.querySelectorAll('button[data-del]').forEach(btn=>btn.onclick=()=>{ state.myConfs=(state.myConfs||[]).filter(c=>c.id!==btn.dataset.del); save(); renderConfs(); });
   }
-  async function openConfs(){ $('#confBody').innerHTML=`<div class="loader"><span class="spin"></span>Loading…</div>`; confSheet.classList.add('open'); await loadConfs(); renderConfs(); }
+  async function openConfs(){ $('#confBody').innerHTML=`<div class="loader"><span class="spin"></span>Loading…</div>`; confSheet.classList.add('open'); await loadConfs(); renderConfs(); loadConfSocial(); }
+  const DATE_RE=/\b(\d{4}-\d{2}-\d{2}|(?:\d{1,2}\s+)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?(?:\s+\d{4})?)\b/gi;
+  let confSocialCache=null;
+  async function loadConfSocial(){
+    const el=$('#confSocial');
+    try{
+      if(!confSocialCache){
+        const kws=[...new Set(state.topics.map(t=>{const pt=parseTopic(t);return (pt.kw||pt.name||'').trim();}).filter(Boolean))].slice(0,6);
+        const jobs=[];
+        for(const kw of kws){ jobs.push(soft0(bskySearch(`${kw} "call for papers"`,25))); jobs.push(soft0(bskySearch(`${kw} abstract deadline`,25))); jobs.push(soft0(bskySearch(`${kw} CFP`,25))); }
+        for(const inst of MASTO_INSTANCES){ jobs.push(soft0(mastoTag(inst,'callforpapers',40))); jobs.push(soft0(mastoTag(inst,'cfp',40))); }
+        const all=(await Promise.all(jobs)).flat();
+        const terms=myTerms(); const seen=new Set();
+        confSocialCache=all.filter(p=>{ if(seen.has(p.url)) return false; seen.add(p.url); const t=p.text.toLowerCase(); const cfp=/call for (papers|abstracts|participation)|abstract(s)? (deadline|due|submission)|deadline|submissions? (open|due)|cfp/i.test(t); const hit=(t.match(/[a-z0-9]+/g)||[]).some(w=>terms.has(stem(w))); return cfp&&hit; })
+          .map(p=>{ DATE_RE.lastIndex=0; const dates=[...new Set((p.text.match(DATE_RE)||[]).slice(0,3))]; return Object.assign(p,{dates}); })
+          .sort((a,b)=>new Date(b.when)-new Date(a.when)).slice(0,20);
+      }
+      const fmt=d=>new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+      el.innerHTML=confSocialCache.length?confSocialCache.map(p=>`<div class="conf"><div class="m">${p.net==='Bluesky'?'🦋':'🐘'} ${esc(p.author)} · ${fmt(p.when)}${p.dates.length?` · <b style="color:var(--accent2)">${esc(p.dates.join(' · '))}</b>`:''}</div><div style="font-size:14px;line-height:1.4;margin-top:4px">${esc(p.text.slice(0,320))}${p.text.length>320?'…':''}</div><div class="m" style="margin-top:6px"><a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:var(--accent)">Open post</a></div></div>`).join('')
+        :'<div class="hint">No recent calls for papers mentioning your topics on Bluesky or Mastodon.</div>';
+    }catch(e){ el.innerHTML='<div class="hint">Social lookup unavailable right now.</div>'; }
+  }
   $('#confAdd').onclick=()=>{
     const name=$('#confName').value.trim(), date=$('#confDate').value, what=$('#confWhat').value.trim()||'Deadline', url=$('#confUrl').value.trim();
     if(!name||!date) return toast('Name and deadline date are needed');
