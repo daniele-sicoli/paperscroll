@@ -364,7 +364,7 @@
           if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
         }
         const sort={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'}[sortMode()];
-        const sel='id,doi,title,display_name,publication_date,authorships,primary_location,open_access,abstract_inverted_index,cited_by_count,type';
+        const sel='id,doi,title,display_name,publication_date,authorships,primary_location,best_oa_location,open_access,abstract_inverted_index,cited_by_count,type';
         const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
         const run=(fl,srch)=>getJSON(`https://api.openalex.org/works?filter=${fl.join(',')}${srch||''}&sort=${sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
         let results=[];
@@ -386,8 +386,15 @@
           const data=await run(filters,search); results=data.results||[];
         }
         const items=results.map(w=>{
-          const loc=w.primary_location||{}; const landing=loc.landing_page_url||w.doi||w.id;
-          return { id:'oa:'+w.id.replace('https://openalex.org/',''), doi:w.doi||'', url:landing, pdf:w.open_access?.oa_url||loc.pdf_url||'',
+          const loc=w.primary_location||{}, boa=w.best_oa_location||{};
+          const isArxDoi=d=>/10\.48550\//.test(d||'');
+          // Open: the DOI (publisher's current version) when there is a real one; else the landing page.
+          const landing=(w.doi&&!isArxDoi(w.doi))?w.doi:(loc.landing_page_url||w.doi||w.id);
+          // PDF: published version first; accepted/submitted manuscripts only as a labelled fallback.
+          const pubPdf=[loc,boa].find(l=>l.pdf_url&&l.version==='publishedVersion')?.pdf_url;
+          const anyPdf=loc.pdf_url||boa.pdf_url||w.open_access?.oa_url||'';
+          const pdf=pubPdf||anyPdf; const pdfPre=!pubPdf&&!!anyPdf;
+          return { id:'oa:'+w.id.replace('https://openalex.org/',''), doi:w.doi||'', url:landing, pdf, pdfPre,
             title:(w.display_name||w.title||'Untitled').trim(), summary:deinvert(w.abstract_inverted_index),
             authors:(w.authorships||[]).map(a=>a.author?.display_name||'').filter(Boolean),
             published:w.publication_date||'', cat:/arxiv\.org\/abs\//.test(landing||'')?'arXiv':(loc.source?.display_name||w.type||''), cites:w.cited_by_count||0, src:'OpenAlex' };
@@ -412,7 +419,9 @@
         }
         items=(data.data||[]).filter(w=>w.abstract||mode==='search').map(w=>{
           const doi=w.externalIds?.DOI||''; const arx=w.externalIds?.ArXiv;
-          return { id:'s2:'+w.paperId, doi, url:arx?`https://arxiv.org/abs/${arx}`:(doi?`https://doi.org/${doi}`:w.url), pdf:w.openAccessPdf?.url||(arx?`https://arxiv.org/pdf/${arx}`:''),
+          const jdoi=doi&&!/^10\.48550\//.test(doi);
+          const pdf=w.openAccessPdf?.url||(arx?`https://arxiv.org/pdf/${arx}`:'');
+          return { id:'s2:'+w.paperId, doi, url:jdoi?`https://doi.org/${doi}`:(arx?`https://arxiv.org/abs/${arx}`:w.url), pdf, pdfPre:!!pdf&&(/arxiv\.org/.test(pdf)||(jdoi&&!/doi\.org|nature\.com|springer|wiley|elsevier|sciencedirect|agupubs|iop|aps\.org|mdpi|frontiersin|plos|copernicus/i.test(pdf))),
             title:(w.title||'Untitled').trim(), summary:w.abstract||'', authors:(w.authors||[]).map(a=>a.name).filter(Boolean),
             published:w.publicationDate||(w.year?String(w.year):''), cat:arx?'arXiv':(w.venue||''), cites:w.citationCount||0, src:'Semantic Scholar' };
         });
@@ -487,8 +496,8 @@
         const arx=(d.identifier||[]).map(x=>/^arXiv:(.+)$/i.exec(x)).find(Boolean)?.[1];
         const doi=(d.doi||[])[0]||'';
         const pub=(d.pubdate||'').replace(/-00/g,'-01');
-        return { id:'ads:'+d.bibcode, doi, url:`https://ui.adsabs.harvard.edu/abs/${d.bibcode}/abstract`,
-          pdf:arx?`https://arxiv.org/pdf/${arx}`:'',
+        return { id:'ads:'+d.bibcode, doi, url:(doi&&!/^10\.48550\//.test(doi))?`https://doi.org/${doi}`:`https://ui.adsabs.harvard.edu/abs/${d.bibcode}/abstract`,
+          pdf:arx?`https://arxiv.org/pdf/${arx}`:'', pdfPre:!!arx,
           title:(d.title||['Untitled'])[0], summary:d.abstract||'',
           authors:(d.author||[]).map(a=>{const m=/^([^,]+),\s*(.+)$/.exec(a);return m?`${m[2]} ${m[1]}`:a;}),
           published:pub, cat:arx&&/eprint/i.test(d.doctype||'')?'arXiv':(d.pub||d.doctype||''), cites:d.citation_count||0, src:'NASA ADS' };
@@ -605,7 +614,7 @@
       <button class="more">Read more</button>
       <div class="actions">
         <a href="${esc(p.url)}" target="_blank" rel="noopener">Open</a>
-        ${p.pdf?`<a href="${esc(p.pdf)}" target="_blank" rel="noopener">PDF</a>`:''}
+        ${p.pdf?`<a href="${esc(p.pdf)}" target="_blank" rel="noopener" title="${p.pdfPre?'Author manuscript / preprint PDF':'Publisher PDF'}">${p.pdfPre?'PDF (preprint)':'PDF'}</a>`:''}
         <button class="save ${isSaved?'saved':''}">${isSaved?'Saved ✓':'Save'}</button>
         <button class="bib" title="Copy BibTeX">BibTeX</button>
         <button class="share">Copy</button>
