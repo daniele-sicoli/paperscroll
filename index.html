@@ -736,10 +736,11 @@
         soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=25&select=${sel}`)),
         soft(oaList([...base,'type:review'],`sort=publication_date:desc&per-page=15&select=${sel}`))
       ]);
-      const [authors,linesAll,linesRecent,insts,years,kws]=await Promise.all([
+      const [authors,topicsAll,topicsRecent,kwsRecent,insts,years,kws]=await Promise.all([
         soft(oaList(base,`group_by=authorships.author.id`)),
         soft(oaList(base,`group_by=primary_topic.id`)),
         soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`group_by=primary_topic.id`)),
+        soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`group_by=keywords.id`)),
         soft(oaList(base,`group_by=authorships.institutions.id`)),
         soft(oaList([...base,`publication_year:>${y-15}`],`group_by=publication_year`)),
         soft(oaList(base,`group_by=keywords.id`))
@@ -747,14 +748,24 @@
       const selfName=pt.kind==='author'?pt.name.toLowerCase():''; const selfName0=selfName;
       const total=(found.meta&&found.meta.count)||0;
       // Lines of work: OpenAlex research topics within this field, with recent share to flag what's heating up.
+      // OpenAlex topics are coarse for some fields (one bucket may hold >60%); then use keywords as the threads.
+      const tAll=(topicsAll.group_by||[]).filter(g=>g.key_display_name);
+      const tSum=tAll.reduce((a,g)=>a+g.count,0)||1;
+      const useKw=pt.kind==='field'||(tAll[0]&&tAll[0].count/tSum>0.6);
+      const linesAll={group_by:useKw?(kws.group_by||[]).filter(g=>g.key_display_name&&!(pt.kw||'').toLowerCase().includes(g.key_display_name.toLowerCase())):tAll};
+      const linesRecent=useKw?kwsRecent:topicsRecent;
+      const lineFilter=useKw?'keywords.id':'primary_topic.id';
+      const lineKind=useKw?'kw':'field';
       const recMap=new Map((linesRecent.group_by||[]).map(g=>[g.key,g.count]));
       const allLines=(linesAll.group_by||[]).filter(g=>g.key_display_name&&!(pt.kind==='field'&&g.key_display_name===pt.name));
       const sumAll=allLines.reduce((a,g)=>a+g.count,0)||1, sumRec=[...recMap.values()].reduce((a,b)=>a+b,0)||1;
       const avgShare=sumRec/sumAll;
       const lines=allLines.slice(0,14).map(g=>{const r=recMap.get(g.key)||0; return {id:String(g.key).replace('https://openalex.org/',''),name:g.key_display_name,n:g.count,r,heat:(r/Math.max(g.count,1))/avgShare};});
+      const fmtN=n=>n>=1000?(n/1000).toFixed(1)+'k':String(n);
+      const growth=l=>l.r>=15&&l.heat>1.3?` 🔥×${l.heat.toFixed(1)}`:(l.r>=15&&l.heat<0.6?` ↓×${l.heat.toFixed(1)}`:'');
       // Map: per-line year distribution (one cheap aggregate call each) → ordered oldest-emerging to newest.
       const Y0=y-29;
-      const dists=await Promise.all(lines.slice(0,10).map(l=>soft(oaList([...base,`primary_topic.id:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`))));
+      const dists=await Promise.all(lines.slice(0,10).map(l=>soft(oaList([...base,`${lineFilter}:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`))));
       const mapRows=lines.slice(0,10).map((l,i)=>{
         const byY=new Map((dists[i].group_by||[]).map(g=>[+g.key,g.count]));
         const counts=[]; for(let yy=Y0;yy<=y;yy++) counts.push(byY.get(yy)||0);
@@ -783,11 +794,11 @@
         <div style="height:14px"></div>
         <h3>Map · lines of work, oldest to newest</h3>
         <div class="sub">Each row is a research thread; shading = papers per year since ${Y0}. Ordered by when the thread emerged. Tap to follow.</div>
-        <div class="map">${mapRows.map(r=>`<div class="r" data-k="field" data-n="${esc(r.name)}"><div class="l">${esc(r.name)}<small>since ${r.emerge} · peak ${r.peak} · ${Math.round(100*r.n/sumAll)}%${r.heat>1.3?' 🔥':''}</small></div><div class="s">${r.counts.map(c=>`<i style="opacity:${c?(0.15+0.85*c/r.max).toFixed(2):0.04}"></i>`).join('')}</div></div>`).join('')}
+        <div class="map">${mapRows.map(r=>`<div class="r" data-k="${lineKind}" data-n="${esc(r.name)}"><div class="l">${esc(r.name)}<small>since ${r.emerge} · peak ${r.peak} · ${fmtN(r.n)} papers${growth(r)}</small></div><div class="s">${r.counts.map(c=>`<i style="opacity:${c?(0.15+0.85*c/r.max).toFixed(2):0.04}"></i>`).join('')}</div></div>`).join('')}
           <div class="ax"><span>${Y0}</span><span>${Y0+10}</span><span>${Y0+20}</span><span>${y}</span></div></div>
         <h3>Lines of work · research threads in this field</h3>
-        <div class="sub">Share of all papers · 🔥 = growing faster than the field since ${y-2} · tap to follow</div>
-        <div class="who">${lines.map(l=>`<button data-k="field" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${Math.round(100*l.n/sumAll)}%${l.heat>1.3?' 🔥':l.heat<0.6?' ·cooling':''}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
+        <div class="sub">${useKw?'Keyword-level threads (the field maps mostly to one OpenAlex topic)':'OpenAlex research topics'} · 🔥×N = recent share N× the field average (lines with ≥15 recent papers) · tap to follow</div>
+        <div class="who">${lines.map(l=>`<button data-k="${lineKind}" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${fmtN(l.n)} papers · ${fmtN(l.r)} since ${y-2}${growth(l)}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
         <h3>Rising · most cited since ${y-2}</h3>${risingL.map(paperRow).join('')||'<div class="sub">—</div>'}
         <h3>Punching above weight · recent papers with the highest field-normalized impact</h3>
         <div class="sub">"×" = citations relative to papers of the same field and age (FWCI). Among ${topN.toLocaleString()} papers since ${y-5} in the field's top 10%.</div>${topByFwci.map(paperRow).join('')||'<div class="sub">—</div>'}
