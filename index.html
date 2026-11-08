@@ -642,8 +642,13 @@
   }
   function stopSpeaking(){ speakSeq++; clearTimeout(speakTimer); try{speechSynthesis.cancel();}catch(e){} if(speakingEl){ const b=speakingEl.querySelector('.listen'); if(b) b.textContent='🔊 Listen'; } speakingEl=null; }
   function pickVoice(){ const vs=speechSynthesis.getVoices(); return vs.find(v=>/en[-_](US|GB)/i.test(v.lang)&&/Siri|Samantha|Daniel|Ava|Zoe|Google (US|UK)|Natural|Premium|Enhanced/i.test(v.name))||vs.find(v=>/^en/i.test(v.lang))||null; }
+  // iOS swallows the first utterance after page load: prime the engine once on the first tap.
+  let speechPrimed=false;
+  function primeSpeech(){ if(speechPrimed||!('speechSynthesis' in window)) return; speechPrimed=true; try{ const u=new SpeechSynthesisUtterance(' '); u.volume=0; speechSynthesis.speak(u); speechSynthesis.cancel(); speechSynthesis.getVoices(); }catch(e){} }
   function speak(el,p){
+    primeSpeech();
     stopSpeaking();
+    try{ speechSynthesis.resume(); }catch(e){}
     const seq=speakSeq, plan=speechPlan(p), voice=pickVoice();
     speakingEl=el; el.querySelector('.listen').textContent='⏹ Stop';
     if(autoplay) setMediaSession(p);
@@ -657,12 +662,17 @@
       u.onend=done;
       const est=Math.max(1500,step.text.length*75/step.rate+step.pause+1500); setTimeout(()=>{ if(!ended&&seq===speakSeq&&!speechSynthesis.speaking){ done(); } },est);
       u.onerror=()=>{ if(seq===speakSeq) speakTimer=setTimeout(next,200); };
-      try{ speechSynthesis.speak(u); }catch(e){ toast('Speech not available in this browser'); stopSpeaking(); }
+      try{ speechSynthesis.resume(); speechSynthesis.speak(u); }catch(e){ toast('Speech not available in this browser'); stopSpeaking(); }
+      // If the engine silently ignored the utterance (iOS first-run bug), retry it once after a moment.
+      if(i===1) setTimeout(()=>{ if(seq===speakSeq&&!speechSynthesis.speaking&&!speechSynthesis.pending&&!ended){ try{ speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){} } },600);
     };
     // iOS loads voices lazily; a tiny delay lets getVoices() populate on first use.
     if(!voice&&speechSynthesis.getVoices().length===0){ speechSynthesis.onvoiceschanged=()=>{ speechSynthesis.onvoiceschanged=null; if(seq===speakSeq) next(); }; speakTimer=setTimeout(()=>{ if(seq===speakSeq&&i===0) next(); },400); }
     else next();
   }
+  document.addEventListener('touchend',primeSpeech,{once:true,passive:true});
+  document.addEventListener('click',primeSpeech,{once:true});
+
   // ---------- play all ----------
   let autoplay=false;
   // Ask iOS for the 'playback' audio session (Safari 16.4+): the supported way to be treated as a media
