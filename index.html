@@ -277,6 +277,9 @@
   // Client-side check: all keyword stems must appear within a short window of each other
   // in the title or abstract, so "density of the thermosphere" passes but scattered matches don't.
   function searchMatches(p,q){
+    const pt=parseTopic(q);
+    if(pt.kind){ if(pt.kind==='author'){ const toks=pt.name.toLowerCase().split(/\s+/); const sur=toks[toks.length-1]; if(sur&&!(p.authors||[]).join(' | ').toLowerCase().includes(sur)) return false; }
+      if(!pt.kw) return true; q=pt.kw; }
     if(hasOps(q)) return true;
     const hay=((p.title||'')+' '+(p.summary||'')+' '+(p.authors||[]).join(' ')+' '+(p.cat||'')).toLowerCase();
     const toks=(hay.match(/[a-z0-9]+/g)||[]).map(stem);
@@ -358,7 +361,7 @@
         if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); filters.push(KINDS[pt.kind].oaFilter+':'+e.id); if(pt.kind!=='journal'&&!quick) filters.push('has_abstract:true'); }
         else if(!quick) filters.push('has_abstract:true');
         let search='';
-        if(pt.kw&&!quick){
+        if(pt.kw&&(!quick||pt.kind)){
           const q=encodeURIComponent(searchTerm(pt.kw));
           const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':'title_and_abstract.search';
           if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
@@ -368,7 +371,7 @@
         const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
         const run=(fl,srch,srt)=>getJSON(`https://api.openalex.org/works?filter=${fl.join(',')}${srch||''}&sort=${srt||sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
         let results=[];
-        if(quick&&pt.kw&&!hasOps(pt.kw)){
+        if(quick&&!pt.kind&&pt.kw&&!hasOps(pt.kw)){
           // Google-style: words may be text terms or author names. Try the whole query as text, and (page 1 only)
           // each word as an author surname with the remaining words as text. Merge, de-duplicate.
           const words=keywords(pt.kw);
@@ -384,7 +387,7 @@
           if(!sets.some(d=>d.results)) throw new Error('OpenAlex search failed');
           if((sets[0].results||[]).length<PER) exhausted[streamKey(topic,'openalex')]=true;
         } else {
-          if(quick&&pt.kw) search='&search='+encodeURIComponent(pt.kw);
+          if(quick&&pt.kw&&!pt.kind) search='&search='+encodeURIComponent(pt.kw);
           const data=await run(filters,search); results=data.results||[];
         }
         const items=results.map(w=>{
@@ -763,7 +766,8 @@
       chipsEl.appendChild(c);
     });
     if(mode==='search'&&searchQ){
-      const sc=document.createElement('span');sc.className='chip on';sc.innerHTML=`🔍 ${esc(searchQ)} <span class="x">✕</span>`;
+      const spt=parseTopic(searchQ); const lab=spt.kind?(KINDS[spt.kind].icon+' '+spt.name+(spt.kw?' · '+spt.kw:'')):searchQ;
+      const sc=document.createElement('span');sc.className='chip on';sc.innerHTML=`🔍 ${esc(lab)} <span class="x">✕</span>`;
       sc.onclick=()=>{mode='feed';searchQ='';searchInput.value='';renderChips();resetFeed();};
       chipsEl.appendChild(sc);
       if(!state.topics.includes(searchQ)){
@@ -896,9 +900,9 @@
     const pend=`<div class="loader" style="padding:10px"><span class="spin"></span>Loading…</div>`;
     const bind=root=>root.querySelectorAll('.who button, .map .r').forEach(btn=>btn.onclick=()=>{
         const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?(/^[A-Z0-9-]+$/.test(n)?n:n.toLowerCase()):`${k}:${n}`;
-        if(state.topics.includes(t)) return toast('Already in your topics');
-        if(!canAddTopic()) return toast(`Max ${MAX_TOPICS} topics — remove one first`);
-        state.topics.push(t); save(); renderChips(); btn.style.borderColor='var(--ok)'; btn.style.opacity='.6'; toast('Added: '+t);
+        // Jump straight into the feed with this term's results; "+ Save as topic" appears in the chip bar.
+        landSheet.classList.remove('open');
+        searchInput.value=t; runSearch();
       });
     const fill=(id,html)=>{ if(!live()) return; const el=b.querySelector('#'+id); if(el){ el.innerHTML=html; bind(el);} };
     try{
@@ -957,22 +961,22 @@
         <div class="trend">${yrs.map(g=>`<div style="height:${Math.round(100*g.n/max)}%" title="${g.y}: ${g.n}"><i>${String(g.y).slice(2)}</i></div>`).join('')}</div>
         <div style="height:14px"></div>
         <h3>Map · lines of work, oldest to newest</h3>
-        <div class="sub">Each row is a research thread; shading = papers per year since ${Y0}. Ordered by when the thread emerged. Tap to follow.</div>
+        <div class="sub">Each row is a research thread; shading = papers per year since ${Y0}. Ordered by when the thread emerged. Tap to see papers.</div>
         <div id="landMap">${pend}</div>
         <h3>Established lines of work · research threads in this field</h3>
-        <div class="sub">${useKw?'Keyword-level threads (the field maps mostly to one OpenAlex topic)':'OpenAlex research topics'} · 🔥×N = recent share N× the field average (lines with ≥15 recent papers) · tap to follow</div>
+        <div class="sub">${useKw?'Keyword-level threads (the field maps mostly to one OpenAlex topic)':'OpenAlex research topics'} · 🔥×N = recent share N× the field average (lines with ≥15 recent papers) · tap to see papers</div>
         <div class="who">${lines.map(l=>`<button data-k="${lineKind}" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${fmtN(l.n)} papers · ${fmtN(l.r)} since ${y-2}${growth(l)}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
         <h3>Emerging lines of work · new terms in the latest papers</h3>
         <div id="landEmerg">${pend}</div>
         <h3>Rising · most cited since ${y-2}</h3><div id="landRising">${pend}</div>
         <h3>Punching above weight · recent papers with the highest field-normalized impact</h3><div id="landTop">${pend}</div>
-        <h3>Impact leaders · authors with most top-10% papers since ${y-5}</h3><div class="sub">Tap to follow · quality over volume</div><div id="landImpAuth">${pend}</div>
-        <h3>Impact leaders · institutions</h3><div class="sub">Tap to follow</div><div id="landImpInst">${pend}</div>
+        <h3>Impact leaders · authors with most top-10% papers since ${y-5}</h3><div class="sub">Tap to see papers · quality over volume</div><div id="landImpAuth">${pend}</div>
+        <h3>Impact leaders · institutions</h3><div class="sub">Tap to see papers</div><div id="landImpInst">${pend}</div>
         <h3>Foundations · most cited of all time</h3>${foundL.map(paperRow).join('')||'<div class="sub">—</div>'}
         <h3>Reviews · recent surveys</h3><div id="landReviews">${pend}</div>
-        <h3>Who · most prolific authors</h3><div class="sub">By number of papers · tap to follow</div><div class="who">${auth.map(g=>followBtn('author',g.key_display_name,g.count,'papers')).join('')}</div>
-        <h3>Where · most prolific institutions</h3><div class="sub">By number of papers · tap to follow</div><div class="who">${inst.map(g=>followBtn('institution',g.key_display_name,g.count,'papers')).join('')}</div>
-        <h3>Neighbours · related keywords</h3><div class="sub">Tap to add as a topic</div><div class="who">${kw.map(g=>followBtn('kw',g.key_display_name,g.count,'papers')).join('')}</div>`;
+        <h3>Who · most prolific authors</h3><div class="sub">By number of papers · tap to see papers</div><div class="who">${auth.map(g=>followBtn('author',g.key_display_name,g.count,'papers')).join('')}</div>
+        <h3>Where · most prolific institutions</h3><div class="sub">By number of papers · tap to see papers</div><div class="who">${inst.map(g=>followBtn('institution',g.key_display_name,g.count,'papers')).join('')}</div>
+        <h3>Neighbours · related keywords</h3><div class="sub">Tap to see papers</div><div class="who">${kw.map(g=>followBtn('kw',g.key_display_name,g.count,'papers')).join('')}</div>`;
       bind(b);
 
       // Phase 2: the rest fills in as each arrives.
@@ -992,7 +996,7 @@
         const recDocs=rec.flatMap(r=>r.results||[]).map(docText), oldDocs=old.flatMap(r=>r.results||[]).map(docText);
         const em=emergingTerms(recDocs,oldDocs,myTopic);
         const chip=x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`;
-        fill('landEmerg',`<div class="sub">Acronyms and phrases frequent in the ${em.nRec} newest abstracts (since ${y-1}) but rare in ${em.nOld} highly-cited ones from ${y-9}–${y-5}. Tap to add as a topic.</div><div class="who">${em.acr.map(chip).join('')}${em.grams.map(chip).join('')||'<div class="sub">—</div>'}</div>`);
+        fill('landEmerg',`<div class="sub">Acronyms and phrases frequent in the ${em.nRec} newest abstracts (since ${y-1}) but rare in ${em.nOld} highly-cited ones from ${y-9}–${y-5}. Tap to see papers.</div><div class="who">${em.acr.map(chip).join('')}${em.grams.map(chip).join('')||'<div class="sub">—</div>'}</div>`);
       });
       // Map needs the lines first; one cheap aggregate per line.
       Promise.all(lines.slice(0,10).map(l=>soft(oaList([...base,`${lineFilter}:${l.id}`,`publication_year:>${Y0-1}`],`group_by=publication_year`)))).then(dists=>{
