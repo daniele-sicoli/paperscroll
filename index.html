@@ -70,6 +70,11 @@
   .seg button.on{background:var(--accent);color:#06101f}
   .toast{position:fixed;left:50%;bottom:calc(24px + var(--sab));transform:translateX(-50%);background:#263246;color:var(--text);padding:10px 14px;border-radius:12px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30;pointer-events:none;max-width:90vw;text-align:center}
   .toast.show{opacity:1}
+  header{position:sticky}
+  .menu{position:absolute;right:14px;top:calc(var(--sat) + 52px);background:var(--card);border:1px solid #2a3449;border-radius:14px;padding:6px;z-index:30;box-shadow:0 10px 30px rgba(0,0,0,.5);min-width:240px}
+  .menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;padding:11px 12px;border-radius:10px;font-size:15px}
+  .menu button:active{background:var(--card2)}
+  .menu button span{width:22px;text-align:center}
   .land h2{display:flex;align-items:center;gap:8px}
   .land h3{font-size:13px;color:var(--accent2);text-transform:uppercase;letter-spacing:.6px;margin:18px 0 8px}
   .land .it{display:block;padding:9px 10px;background:var(--bg);border-radius:10px;margin-bottom:6px;text-decoration:none;color:var(--text)}
@@ -109,13 +114,17 @@
 <header>
   <div class="row">
     <h1>Paper<span>Scroll</span></h1>
-    <button class="icon" id="btnConf" title="Conferences & deadlines">🗓</button>
     <button class="icon" id="btnPlay" title="Play all: read abstracts one after another">▶︎</button>
-    <button class="icon" id="btnLand" title="Landscape">📊</button>
-    <button class="icon" id="btnAccount" title="Account">👤</button>
-    <button class="icon" id="btnSaved" title="Saved">🔖</button>
-    <button class="icon" id="btnRefresh" title="Refresh">↻</button>
+    <button id="btnMenu">Menu ▾</button>
     <button class="primary" id="btnTopics">Topics</button>
+    <div id="menu" class="menu" style="display:none">
+      <button id="btnLand"><span>📊</span> Landscape · state of the art</button>
+      <button id="btnConf"><span>🗓</span> Conferences &amp; deadlines</button>
+      <button id="btnSaved"><span>🔖</span> Saved papers</button>
+      <button id="btnRefresh"><span>↻</span> Refresh feed</button>
+      <button id="btnAccount"><span>👤</span> Account &amp; sync</button>
+      <button id="btnAbout"><span>ℹ️</span> About PaperScroll</button>
+    </div>
   </div>
   <div class="row" id="searchRow" style="margin-top:8px">
     <input id="searchInput" type="search" placeholder="🔍 Search papers — words, authors, titles…" autocomplete="off" style="flex:1;padding:9px 12px">
@@ -998,6 +1007,14 @@
   let lastRefresh=0;
   $('#btnRefresh').onclick=()=>{const now=Date.now(); if(now-lastRefresh<MIN_REFRESH_MS){toast(`Easy — refresh again in ${Math.ceil((MIN_REFRESH_MS-(now-lastRefresh))/1000)} s`);return;} lastRefresh=now; quotaHit=null;mode='feed';renderChips();resetFeed();toast('Refreshed');};
   $('#btnSaved').onclick=()=>{mode=mode==='saved'?'feed':'saved';renderChips();resetFeed();};
+
+  // ---------- menu ----------
+  const menu=$('#menu'), btnMenu=$('#btnMenu');
+  const closeMenu=()=>{ menu.style.display='none'; };
+  btnMenu.onclick=(e)=>{ e.stopPropagation(); menu.style.display=menu.style.display==='none'?'':'none'; };
+  document.addEventListener('click',(e)=>{ if(menu.style.display!=='none'&&!menu.contains(e.target)&&e.target!==btnMenu) closeMenu(); });
+  menu.querySelectorAll('button').forEach(b=>b.addEventListener('click',closeMenu));
+  $('#btnAbout').onclick=()=>{ const b=$('#acctBody'); acctSheet.classList.add('open'); b.innerHTML=`<div class="acct"><b>PaperScroll</b> — a free, open-source feed for research papers.<br><br>Searches OpenAlex, Semantic Scholar, Crossref, Europe PMC and NASA ADS; follows topics, journals, authors, institutions and research lines; maps a field's landscape; reads abstracts aloud.<br><br>Build <span id="aboutBuild">${esc(BUILD&&BUILD!=='__BUILD__'?BUILD:'dev')}</span> · MIT licence · <a href="https://github.com/daniele-sicoli/paperscroll" target="_blank" rel="noopener" style="color:var(--accent)">Source on GitHub</a><br>Made by Daniele Sicoli.</div>`; };
 
   // ---------- quick search ----------
   const searchRow=$('#searchRow'), searchInput=$('#searchInput');
