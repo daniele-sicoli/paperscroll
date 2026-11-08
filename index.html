@@ -176,6 +176,7 @@
 
   // per-topic paging & buffers
   let cursors={}, buffers={}, exhausted={}, loading=false, mode='feed'; // 'feed' | 'saved'
+  let gen=0, loadingGen=-1; // feed generation: switching topics cancels in-flight loads
   const PAGE=25;
 
   // ---------- helpers ----------
@@ -523,10 +524,13 @@
   function hideLoader(){ loaderEl?.remove(); }
 
   async function loadMore(){
-    if(loading) return; loading=true; showLoader();
+    if(loadingGen===gen) return;           // this feed is already loading
+    const my=gen; loadingGen=my; showLoader();
+    const live=()=>my===gen;               // false once the user switched feeds
     try{
       let n=0;
-      if(mode!=='saved') n=await nextBatch(items=>{ hideLoader(); items.forEach(p=>feed.appendChild(card(p))); showLoader(); });
+      if(mode!=='saved') n=await nextBatch(items=>{ if(!live()) return; hideLoader(); items.forEach(p=>feed.appendChild(card(p))); showLoader(); });
+      if(!live()) return;
       hideLoader();
       if(!n){
         const allDone=allExhausted();
@@ -541,11 +545,11 @@
           const d=document.createElement('div');d.className='empty end';d.innerHTML='You reached the end of the results for these topics.<br>Add more topics or reset "seen".';feed.appendChild(d);
         }
       }
-    } finally { loading=false; }
+    } finally { if(loadingGen===my) loadingGen=-1; }
   }
 
   function resetFeed(){
-    cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
+    gen++; loadingGen=-1; cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
     if(mode==='saved'){
       const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
       const bar=$('#savedBar'); bar.innerHTML=''; bar.appendChild(savedToolbar(list)); bar.style.display='';
