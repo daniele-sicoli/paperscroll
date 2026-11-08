@@ -899,10 +899,15 @@
     const myTopic=topic; const live=()=>landSheet.classList.contains('open')&&$('#landTitle').textContent==='Landscape: '+title;
     const pend=`<div class="loader" style="padding:10px"><span class="spin"></span>Loading…</div>`;
     const bind=root=>root.querySelectorAll('.who button, .map .r').forEach(btn=>btn.onclick=()=>{
-        const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?(/^[A-Z0-9-]+$/.test(n)?n:n.toLowerCase()):`${k}:${n}`;
-        // Jump straight into the feed with this term's results; "+ Save as topic" appears in the chip bar.
+        const k=btn.dataset.k, n=btn.dataset.n; const term=k==='kw'?(/^[A-Z0-9-]+$/.test(n)?n:n.toLowerCase()):n;
+        // Scope the search to the landscape's topic: "ROPE" tapped inside "thermosphere density"
+        // searches ROPE + thermosphere density, not wire ropes.
+        const ctxKw=pt.kind?pt.kw:topic;
+        let q;
+        if(k==='kw') q=pt.kind?`${pt.kind}:${pt.name} | ${[ctxKw,term].filter(Boolean).join(' ')}`:`${term} ${ctxKw}`.trim();
+        else q=`${k}:${n}${ctxKw?' | '+ctxKw:''}`;
         landSheet.classList.remove('open');
-        searchInput.value=t; runSearch();
+        searchInput.value=q; runSearch();
       });
     const fill=(id,html)=>{ if(!live()) return; const el=b.querySelector('#'+id); if(el){ el.innerHTML=html; bind(el);} };
     try{
