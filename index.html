@@ -718,6 +718,22 @@
   };
   function followBtn(kind,name,count,label){ return `<button data-k="${kind}" data-n="${esc(name)}"><b>${esc(name)}</b><span>${count} ${label}</span></button>`; }
 
+  const GEN_ACR=new Set(['DOI','USA','UK','EU','ESA','NASA','NOAA','IEEE','AGU','PDF','HTML','API','ISSN','ET','AL','CC','BY','AND','THE','FOR','WITH']);
+  function emergingTerms(recDocs,oldDocs,topic){
+    const topicWords=new Set(keywords(topic).map(stem));
+    const df=(docs,extract)=>{ const m=new Map(); for(const d of docs){ const seen=new Set(extract(d)); for(const t of seen) m.set(t,(m.get(t)||0)+1);} return m; };
+    const acr=d=>(d.match(/\b[A-Z][A-Z0-9-]{1,9}[A-Z0-9]\b/g)||[]).filter(a=>!GEN_ACR.has(a)&&/[A-Z]{2}/.test(a));
+    const grams=d=>{ const toks=(d.toLowerCase().match(/[a-z][a-z0-9-]+/g)||[]).filter(w=>w.length>2&&!STOP.has(w)&&!['which','these','their','paper','study','results','using','based','model','models','data','method','methods','approach','analysis','show','shows','during','between','over','also','both','high','low','new','two','one','this','that','from','into','were','have','has','can','may','our','such'].includes(w));
+      const out=[]; for(let i=0;i<toks.length-1;i++){ out.push(toks[i]+' '+toks[i+1]); if(i<toks.length-2) out.push(toks[i]+' '+toks[i+1]+' '+toks[i+2]); } return out; };
+    const score=(extract,minRec,minRatio)=>{ const R=df(recDocs,extract), O=df(oldDocs,extract); const n=Math.max(1,recDocs.length), m=Math.max(1,oldDocs.length);
+      return [...R].filter(([t,c])=>c>=minRec).map(([t,c])=>{ const o=O.get(t)||0; const ratio=(c/n)/((o+0.5)/m); return {t,c,o,ratio}; }).filter(x=>x.ratio>=minRatio).sort((a,b)=>b.ratio*Math.log(1+b.c)-a.ratio*Math.log(1+a.c)); };
+    const A=score(acr,3,3).slice(0,10);
+    const G=score(grams,4,4).filter(x=>!x.t.split(' ').every(w=>topicWords.has(stem(w)))).slice(0,12);
+    // drop grams that are substrings of a longer selected gram
+    const Gs=G.filter(x=>!G.some(y=>y!==x&&y.t.includes(x.t)&&y.t.length>x.t.length));
+    return {acr:A,grams:Gs,nRec:recDocs.length,nOld:oldDocs.length};
+  }
+
   async function openLandscape(topic){
     const pt=parseTopic(topic); const title=pt.kind?`${KINDS[pt.kind].icon} ${pt.name}${pt.kw?' · '+pt.kw:''}`:topic;
     $('#landTitle').textContent='Landscape: '+title; const b=$('#landBody');
@@ -747,6 +763,17 @@
       ]);
       const selfName=pt.kind==='author'?pt.name.toLowerCase():''; const selfName0=selfName;
       const total=(found.meta&&found.meta.count)||0;
+      // Emerging terms: compare acronyms / phrases in the newest abstracts against an older sample.
+      const selT='display_name,title,abstract_inverted_index,publication_date';
+      const [recA,recB,oldA,oldB]=await Promise.all([
+        soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=1&select=${selT}`)),
+        soft(oaList([...base,`from_publication_date:${y-1}-01-01`],`sort=publication_date:desc&per-page=100&page=2&select=${selT}`)),
+        soft(oaList([...base,`from_publication_date:${y-9}-01-01`,`to_publication_date:${y-5}-12-31`],`sort=cited_by_count:desc&per-page=100&page=1&select=${selT}`)),
+        soft(oaList([...base,`from_publication_date:${y-9}-01-01`,`to_publication_date:${y-5}-12-31`],`sort=cited_by_count:desc&per-page=100&page=2&select=${selT}`))
+      ]);
+      const docText=w=>(w.display_name||w.title||'')+'. '+deinvert(w.abstract_inverted_index);
+      const recDocs=[...(recA.results||[]),...(recB.results||[])].map(docText), oldDocs=[...(oldA.results||[]),...(oldB.results||[])].map(docText);
+      const emerging=emergingTerms(recDocs,oldDocs,topic);
       // Lines of work: OpenAlex research topics within this field, with recent share to flag what's heating up.
       // OpenAlex topics are coarse for some fields (one bucket may hold >60%); then use keywords as the threads.
       const tAll=(topicsAll.group_by||[]).filter(g=>g.key_display_name);
@@ -799,6 +826,9 @@
         <h3>Lines of work · research threads in this field</h3>
         <div class="sub">${useKw?'Keyword-level threads (the field maps mostly to one OpenAlex topic)':'OpenAlex research topics'} · 🔥×N = recent share N× the field average (lines with ≥15 recent papers) · tap to follow</div>
         <div class="who">${lines.map(l=>`<button data-k="${lineKind}" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${fmtN(l.n)} papers · ${fmtN(l.r)} since ${y-2}${growth(l)}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
+        <h3>Emerging terms · new jargon in the latest papers</h3>
+        <div class="sub">Acronyms and phrases frequent in the ${emerging.nRec} newest abstracts (since ${y-1}) but rare in ${emerging.nOld} highly-cited ones from ${y-9}–${y-5}. Tap to add as a topic.</div>
+        <div class="who">${emerging.acr.map(x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`).join('')}${emerging.grams.map(x=>`<button data-k="kw" data-n="${esc(x.t)}"><b>${esc(x.t)}</b><span>${x.c} papers${x.o?' · '+x.o+' before':' · new'}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
         <h3>Rising · most cited since ${y-2}</h3>${risingL.map(paperRow).join('')||'<div class="sub">—</div>'}
         <h3>Punching above weight · recent papers with the highest field-normalized impact</h3>
         <div class="sub">"×" = citations relative to papers of the same field and age (FWCI). Among ${topN.toLocaleString()} papers since ${y-5} in the field's top 10%.</div>${topByFwci.map(paperRow).join('')||'<div class="sub">—</div>'}
@@ -810,7 +840,7 @@
         <h3>Where · most prolific institutions</h3><div class="sub">By number of papers · tap to follow</div><div class="who">${inst.map(g=>followBtn('institution',g.key_display_name,g.count,'papers')).join('')}</div>
         <h3>Neighbours · related keywords</h3><div class="sub">Tap to add as a topic</div><div class="who">${kw.map(g=>followBtn('kw',g.key_display_name,g.count,'papers')).join('')}</div>`;
       b.querySelectorAll('.who button, .map .r').forEach(btn=>btn.onclick=()=>{
-        const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?n.toLowerCase():`${k}:${n}`;
+        const k=btn.dataset.k, n=btn.dataset.n; const t=k==='kw'?(/^[A-Z0-9-]+$/.test(n)?n:n.toLowerCase()):`${k}:${n}`;
         if(state.topics.includes(t)) return toast('Already in your topics');
         if(!canAddTopic()) return toast(`Max ${MAX_TOPICS} topics — remove one first`);
         state.topics.push(t); save(); renderChips(); btn.style.borderColor='var(--ok)'; btn.style.opacity='.6'; toast('Added: '+t);
