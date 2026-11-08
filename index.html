@@ -664,8 +664,13 @@
   let autoplay=false;
   const btnPlay=$('#btnPlay');
   const visibleCard=()=>{ const cards=[...feed.querySelectorAll('.card')]; const top=feed.scrollTop; let best=null,bd=1e9; for(const c of cards){ const d=Math.abs(c.offsetTop-top); if(d<bd){bd=d;best=c;} } return best; };
+  // Keep the screen awake while playing (Screen Wake Lock API); released on pause or when the tab is hidden.
+  let wakeLock=null;
+  async function holdWake(){ try{ if('wakeLock' in navigator&&!wakeLock){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null;}); } }catch(e){ wakeLock=null; } }
+  function releaseWake(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
   function setAutoplay(on){
     autoplay=on; btnPlay.textContent=on?'⏸':'▶︎'; btnPlay.style.background=on?'var(--accent)':''; btnPlay.style.color=on?'#06101f':'';
+    if(on) holdWake(); else releaseWake();
     if(on){ const c=visibleCard(); if(c&&c._paper) speak(c,c._paper); else toast('Nothing to read yet'); }
     else stopSpeaking();
   }
