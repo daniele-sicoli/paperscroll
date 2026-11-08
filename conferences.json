@@ -1,51 +1,584 @@
 {
-  "updated": "2026-11-08",
-  "note": "Curated list. Dates are taken from organiser pages where possible; entries marked tbc are not yet announced. Edit this file (or open a GitHub issue) to add or correct conferences.",
-  "conferences": [
-    {"name":"SIAM Conference on Applications of Dynamical Systems (DS27)","short":"SIAM DS27","org":"SIAM","start":"2027-05-23","end":"2027-05-27","location":"Atlanta, GA, USA","url":"https://www.siam.org/conferences-events/siam-conferences/ds27/",
-     "tags":["dynamical systems","applied mathematics","data-driven modeling","SINDy","reduced order","uncertainty quantification","machine learning"],
-     "deadlines":[{"what":"Minisymposium proposals","date":"2026-10-26"},{"what":"Contributed lecture, poster & minisymposium abstracts","date":"2026-11-23"},{"what":"Travel support","date":"2027-02-22"},{"what":"Early registration","date":"2027-04-26"}]},
-    {"name":"SIAM Conference on Computational Science and Engineering (CSE27)","short":"SIAM CSE27","org":"SIAM","start":"2027-02-22","end":"2027-02-26","location":"Pittsburgh, PA, USA","url":"https://www.siam.org/conferences-events/siam-conferences/cse27/",
-     "tags":["computational science","scientific machine learning","high-performance computing","reduced order","surrogate models","uncertainty quantification"],
-     "deadlines":[{"what":"Abstracts (contributed & minisymposium)","date":"2026-08-25"},{"what":"Travel support","date":"2026-11-30"},{"what":"Early registration","date":"2027-01-29"}]},
-    {"name":"SIAM Annual Meeting (AN27)","short":"SIAM AN27","org":"SIAM","start":"2027-07-12","end":"2027-07-16","location":"TBC","url":"https://www.siam.org/conferences-events/siam-conferences/","tbc":true,
-     "tags":["applied mathematics","computational science","dynamical systems","data science"],
-     "deadlines":[{"what":"Abstracts (estimated)","date":"2026-12-16","estimated":true}]},
-    {"name":"AGU Annual Meeting 2026 (AGU26)","short":"AGU26","org":"AGU","start":"2026-12-07","end":"2026-12-11","location":"San Francisco, CA, USA","url":"https://www.agu.org/annual-meeting",
-     "tags":["space physics","space weather","thermosphere","ionosphere","geophysics","planetary science","atmospheric science"],
-     "deadlines":[{"what":"Abstracts","date":"2026-08-05"},{"what":"Late-breaking abstracts","date":"2026-09-29"},{"what":"Early registration","date":"2026-11-05"}]},
-    {"name":"AGU Annual Meeting 2027 (AGU27)","short":"AGU27","org":"AGU","start":"2027-12-13","end":"2027-12-17","location":"TBC","url":"https://www.agu.org/annual-meeting","tbc":true,
-     "tags":["space physics","space weather","thermosphere","ionosphere","geophysics","planetary science","atmospheric science"],
-     "deadlines":[{"what":"Abstracts (typically early August)","date":"2027-08-04","estimated":true}]},
-    {"name":"49th AAS Guidance, Navigation and Control Conference","short":"AAS GN&C 2027","org":"AAS Rocky Mountain Section","start":"2027-02-05","end":"2027-02-10","location":"Breckenridge, CO, USA","url":"https://aas-rocky-mountain-section.org/",
-     "tags":["guidance navigation control","astrodynamics","spacecraft","orbit determination","space situational awareness"],
-     "deadlines":[{"what":"Abstracts","date":"2026-10-01","closed":true},{"what":"Classified session registration","date":"2027-01-15"}]},
-    {"name":"37th AIAA/AAS Space Flight Mechanics Meeting","short":"SFM 2027","org":"AAS / AIAA","start":"2027-01-17","end":"2027-01-21","location":"New Orleans, LA, USA","url":"https://space-flight.org/",
-     "tags":["astrodynamics","orbit determination","space situational awareness","atmospheric drag","thermosphere","conjunction assessment"],
-     "deadlines":[{"what":"Abstracts","date":"2026-09-15","closed":true,"estimated":true}]},
-    {"name":"AAS/AIAA Astrodynamics Specialist Conference 2027","short":"Astrodynamics 2027","org":"AAS / AIAA","start":"2027-08-09","end":"2027-08-12","location":"Colorado Springs, CO, USA","url":"https://space-flight.org/",
-     "tags":["astrodynamics","orbit determination","space situational awareness","atmospheric drag","thermosphere","conjunction assessment"],
-     "deadlines":[{"what":"Abstracts (typically April)","date":"2027-04-15","estimated":true}]},
-    {"name":"41st AIAA/USU Conference on Small Satellites (SmallSat 2027)","short":"SmallSat 2027","org":"Utah State University / AIAA","start":"2027-08-15","end":"2027-08-18","location":"Logan, UT, USA","url":"https://smallsat.org/conference/dates-and-deadlines/",
-     "tags":["small satellites","CubeSat","spacecraft","space operations"],
-     "deadlines":[{"what":"Abstracts (typically early February)","date":"2027-02-05","estimated":true}]},
-    {"name":"AIAA SciTech Forum 2027","short":"AIAA SciTech 2027","org":"AIAA","start":"2027-01-11","end":"2027-01-15","location":"TBC","url":"https://www.aiaa.org/scitech","tbc":true,
-     "tags":["aerospace","astrodynamics","guidance navigation control","space systems","machine learning"],
-     "deadlines":[{"what":"Abstracts (typically June)","date":"2026-06-04","closed":true,"estimated":true}]},
-    {"name":"Space Weather Workshop 2027","short":"SWW 2027","org":"UCAR / NOAA SWPC / NSF / NASA","start":"2027-04-26","end":"2027-04-30","location":"Boulder, CO, USA (TBC)","url":"https://cpaess.ucar.edu/meetings/space-weather-workshop","tbc":true,
-     "tags":["space weather","thermosphere","ionosphere","satellite drag","forecasting","operations"],
-     "deadlines":[{"what":"Abstracts (typically February)","date":"2027-02-15","estimated":true}]},
-    {"name":"European Space Weather Week 2026 (ESWW 2026)","short":"ESWW 2026","org":"ESWW","start":"2026-11-16","end":"2026-11-20","location":"Florence, Italy","url":"https://esww.eu/","tbc":true,
-     "tags":["space weather","thermosphere","ionosphere","satellite drag","forecasting"],
-     "deadlines":[{"what":"Abstracts","date":"2026-06-30","closed":true,"estimated":true}]},
-    {"name":"CEDAR Workshop 2027","short":"CEDAR 2027","org":"NSF CEDAR","start":"2027-06-20","end":"2027-06-25","location":"TBC","url":"https://cedarscience.org/","tbc":true,
-     "tags":["thermosphere","ionosphere","upper atmosphere","space physics"],
-     "deadlines":[{"what":"Abstracts (typically May)","date":"2027-05-01","estimated":true}]},
-    {"name":"NeurIPS 2027","short":"NeurIPS 2027","org":"NeurIPS Foundation","start":"2027-12-06","end":"2027-12-12","location":"TBC","url":"https://neurips.cc/","tbc":true,
-     "tags":["machine learning","scientific machine learning","deep learning"],
-     "deadlines":[{"what":"Papers (typically mid-May)","date":"2027-05-14","estimated":true}]},
-    {"name":"ICML 2027","short":"ICML 2027","org":"ICML","start":"2027-07-11","end":"2027-07-17","location":"TBC","url":"https://icml.cc/","tbc":true,
-     "tags":["machine learning","scientific machine learning","deep learning"],
-     "deadlines":[{"what":"Papers (typically late January)","date":"2027-01-29","estimated":true}]}
-  ]
+ "updated": "2026-11-08",
+ "note": "Curated list. Dates are taken from organiser pages where possible; entries marked tbc are not yet announced. Edit this file (or open a GitHub issue) to add or correct conferences.",
+ "conferences": [
+  {
+   "name": "SIAM Conference on Applications of Dynamical Systems (DS27)",
+   "short": "SIAM DS27",
+   "org": "SIAM",
+   "start": "2027-05-23",
+   "end": "2027-05-27",
+   "location": "Atlanta, GA, USA",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/ds27/",
+   "tags": [
+    "dynamical systems",
+    "applied mathematics",
+    "data-driven modeling",
+    "SINDy",
+    "reduced order",
+    "uncertainty quantification",
+    "machine learning"
+   ],
+   "deadlines": [
+    {
+     "what": "Minisymposium proposals",
+     "date": "2026-10-26"
+    },
+    {
+     "what": "Contributed lecture, poster & minisymposium abstracts",
+     "date": "2026-11-23"
+    },
+    {
+     "what": "Travel support",
+     "date": "2027-02-22"
+    },
+    {
+     "what": "Early registration",
+     "date": "2027-04-26"
+    }
+   ]
+  },
+  {
+   "name": "SIAM Conference on Computational Science and Engineering (CSE27)",
+   "short": "SIAM CSE27",
+   "org": "SIAM",
+   "start": "2027-02-22",
+   "end": "2027-02-26",
+   "location": "Pittsburgh, PA, USA",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/cse27/",
+   "tags": [
+    "computational science",
+    "scientific machine learning",
+    "high-performance computing",
+    "reduced order",
+    "surrogate models",
+    "uncertainty quantification"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (contributed & minisymposium)",
+     "date": "2026-08-25"
+    },
+    {
+     "what": "Travel support",
+     "date": "2026-11-30"
+    },
+    {
+     "what": "Early registration",
+     "date": "2027-01-29"
+    }
+   ]
+  },
+  {
+   "name": "SIAM Annual Meeting (AN27)",
+   "short": "SIAM AN27",
+   "org": "SIAM",
+   "start": "2027-07-12",
+   "end": "2027-07-16",
+   "location": "TBC",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/",
+   "tbc": true,
+   "tags": [
+    "applied mathematics",
+    "computational science",
+    "dynamical systems",
+    "data science"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (tracker estimate)",
+     "date": "2026-12-15",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "AGU Annual Meeting 2026 (AGU26)",
+   "short": "AGU26",
+   "org": "AGU",
+   "start": "2026-12-07",
+   "end": "2026-12-11",
+   "location": "San Francisco, CA, USA",
+   "url": "https://www.agu.org/annual-meeting",
+   "tags": [
+    "space physics",
+    "space weather",
+    "thermosphere",
+    "ionosphere",
+    "geophysics",
+    "planetary science",
+    "atmospheric science"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts",
+     "date": "2026-08-05"
+    },
+    {
+     "what": "Late-breaking abstracts",
+     "date": "2026-09-29"
+    },
+    {
+     "what": "Early registration",
+     "date": "2026-11-05"
+    }
+   ]
+  },
+  {
+   "name": "AGU Annual Meeting 2027 (AGU27)",
+   "short": "AGU27",
+   "org": "AGU",
+   "start": "2027-12-13",
+   "end": "2027-12-17",
+   "location": "TBC",
+   "url": "https://www.agu.org/annual-meeting",
+   "tbc": true,
+   "tags": [
+    "space physics",
+    "space weather",
+    "thermosphere",
+    "ionosphere",
+    "geophysics",
+    "planetary science",
+    "atmospheric science"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (typically early August)",
+     "date": "2027-08-04",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "49th AAS Guidance, Navigation and Control Conference",
+   "short": "AAS GN&C 2027",
+   "org": "AAS Rocky Mountain Section",
+   "start": "2027-02-05",
+   "end": "2027-02-10",
+   "location": "Breckenridge, CO, USA",
+   "url": "https://aas-rocky-mountain-section.org/",
+   "tags": [
+    "guidance navigation control",
+    "astrodynamics",
+    "spacecraft",
+    "orbit determination",
+    "space situational awareness"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts",
+     "date": "2026-10-01",
+     "closed": true
+    },
+    {
+     "what": "Classified session registration",
+     "date": "2027-01-15"
+    }
+   ]
+  },
+  {
+   "name": "37th AIAA/AAS Space Flight Mechanics Meeting",
+   "short": "SFM 2027",
+   "org": "AAS / AIAA",
+   "start": "2027-01-17",
+   "end": "2027-01-21",
+   "location": "New Orleans, LA, USA",
+   "url": "https://space-flight.org/",
+   "tags": [
+    "astrodynamics",
+    "orbit determination",
+    "space situational awareness",
+    "atmospheric drag",
+    "thermosphere",
+    "conjunction assessment"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts",
+     "date": "2026-09-15",
+     "closed": true,
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "AAS/AIAA Astrodynamics Specialist Conference 2027",
+   "short": "Astrodynamics 2027",
+   "org": "AAS / AIAA",
+   "start": "2027-08-09",
+   "end": "2027-08-12",
+   "location": "Colorado Springs, CO, USA",
+   "url": "https://space-flight.org/",
+   "tags": [
+    "astrodynamics",
+    "orbit determination",
+    "space situational awareness",
+    "atmospheric drag",
+    "thermosphere",
+    "conjunction assessment"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (typically April)",
+     "date": "2027-04-15",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "41st AIAA/USU Conference on Small Satellites (SmallSat 2027)",
+   "short": "SmallSat 2027",
+   "org": "Utah State University / AIAA",
+   "start": "2027-08-15",
+   "end": "2027-08-18",
+   "location": "Logan, UT, USA",
+   "url": "https://smallsat.org/conference/dates-and-deadlines/",
+   "tags": [
+    "small satellites",
+    "CubeSat",
+    "spacecraft",
+    "space operations"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (typically early February)",
+     "date": "2027-02-05",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "AIAA SciTech Forum 2027",
+   "short": "AIAA SciTech 2027",
+   "org": "AIAA",
+   "start": "2027-01-11",
+   "end": "2027-01-15",
+   "location": "TBC",
+   "url": "https://www.aiaa.org/scitech",
+   "tbc": true,
+   "tags": [
+    "aerospace",
+    "astrodynamics",
+    "guidance navigation control",
+    "space systems",
+    "machine learning"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (typically June)",
+     "date": "2026-06-04",
+     "closed": true,
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "Space Weather Workshop 2027",
+   "short": "SWW 2027",
+   "org": "UCAR / NOAA SWPC / NSF / NASA",
+   "start": "2027-04-26",
+   "end": "2027-04-30",
+   "location": "Boulder, CO, USA (TBC)",
+   "url": "https://cpaess.ucar.edu/meetings/space-weather-workshop",
+   "tbc": true,
+   "tags": [
+    "space weather",
+    "thermosphere",
+    "ionosphere",
+    "satellite drag",
+    "forecasting",
+    "operations"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (typically February)",
+     "date": "2027-02-15",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "European Space Weather Week 2026 (ESWW 2026)",
+   "short": "ESWW 2026",
+   "org": "ESWW",
+   "start": "2026-11-16",
+   "end": "2026-11-20",
+   "location": "Florence, Italy",
+   "url": "https://esww.eu/",
+   "tbc": true,
+   "tags": [
+    "space weather",
+    "thermosphere",
+    "ionosphere",
+    "satellite drag",
+    "forecasting"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts",
+     "date": "2026-06-30",
+     "closed": true,
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "CEDAR Workshop 2027",
+   "short": "CEDAR 2027",
+   "org": "NSF CEDAR",
+   "start": "2027-06-20",
+   "end": "2027-06-25",
+   "location": "TBC",
+   "url": "https://cedarscience.org/",
+   "tbc": true,
+   "tags": [
+    "thermosphere",
+    "ionosphere",
+    "upper atmosphere",
+    "space physics"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (typically May)",
+     "date": "2027-05-01",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "NeurIPS 2027",
+   "short": "NeurIPS 2027",
+   "org": "NeurIPS Foundation",
+   "start": "2027-12-06",
+   "end": "2027-12-12",
+   "location": "TBC",
+   "url": "https://neurips.cc/",
+   "tbc": true,
+   "tags": [
+    "machine learning",
+    "scientific machine learning",
+    "deep learning"
+   ],
+   "deadlines": [
+    {
+     "what": "Papers (typically mid-May)",
+     "date": "2027-05-14",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "ICML 2027",
+   "short": "ICML 2027",
+   "org": "ICML",
+   "start": "2027-07-11",
+   "end": "2027-07-17",
+   "location": "TBC",
+   "url": "https://icml.cc/",
+   "tbc": true,
+   "tags": [
+    "machine learning",
+    "scientific machine learning",
+    "deep learning"
+   ],
+   "deadlines": [
+    {
+     "what": "Papers (typically late January)",
+     "date": "2027-01-29",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "SIAM Conference on Applied Linear Algebra (LA27)",
+   "short": "SIAM LA27",
+   "org": "SIAM",
+   "start": "2027-05-24",
+   "end": "2027-05-28",
+   "location": "Long Beach, CA, USA",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/la27/",
+   "tags": [
+    "linear algebra",
+    "numerical analysis",
+    "reduced order",
+    "dimensionality reduction",
+    "PCA",
+    "scientific computing"
+   ],
+   "deadlines": [
+    {
+     "what": "Minisymposium / minitutorial proposals",
+     "date": "2026-10-26"
+    },
+    {
+     "what": "Abstracts (contributed lecture, poster, minisymposium talks)",
+     "date": "2026-11-23"
+    },
+    {
+     "what": "Travel support",
+     "date": "2027-02-22"
+    },
+    {
+     "what": "Early registration",
+     "date": "2027-04-26"
+    }
+   ]
+  },
+  {
+   "name": "SIAM Conference on Mathematical & Computational Issues in the Geosciences (GS27)",
+   "short": "SIAM GS27",
+   "org": "SIAM",
+   "start": "2027-06-02",
+   "end": "2027-06-05",
+   "location": "Baltimore, MD, USA",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/gs27/",
+   "tags": [
+    "geosciences",
+    "atmospheric science",
+    "data assimilation",
+    "uncertainty quantification",
+    "inverse problems",
+    "space weather",
+    "machine learning"
+   ],
+   "deadlines": [
+    {
+     "what": "Minisymposium proposals",
+     "date": "2026-11-04"
+    },
+    {
+     "what": "Abstracts (contributed lecture, poster, minisymposium talks)",
+     "date": "2026-12-02"
+    },
+    {
+     "what": "Travel support",
+     "date": "2027-03-03"
+    },
+    {
+     "what": "Early registration",
+     "date": "2027-05-10"
+    }
+   ]
+  },
+  {
+   "name": "ICIAM 2027 — 11th International Congress on Industrial and Applied Mathematics",
+   "short": "ICIAM 2027",
+   "org": "ICIAM / KWG",
+   "start": "2027-07-12",
+   "end": "2027-07-16",
+   "location": "The Hague, Netherlands",
+   "url": "https://iciam2027.org/",
+   "tags": [
+    "applied mathematics",
+    "industrial mathematics",
+    "dynamical systems",
+    "scientific machine learning",
+    "uncertainty quantification",
+    "computational science"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts (posters) & minisymposium proposals",
+     "date": "2026-12-07"
+    },
+    {
+     "what": "Grant applications",
+     "date": "2026-12-07"
+    },
+    {
+     "what": "Early-bird registration",
+     "date": "2027-02-09"
+    },
+    {
+     "what": "Regular registration",
+     "date": "2027-06-14"
+    }
+   ]
+  },
+  {
+   "name": "SIAM Conference on Control and Its Applications (CT27)",
+   "short": "SIAM CT27",
+   "org": "SIAM",
+   "start": "2027-08-02",
+   "end": "2027-08-04",
+   "location": "Arlington, VA, USA",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/ct27/",
+   "tags": [
+    "control",
+    "dynamical systems",
+    "SINDy",
+    "system identification",
+    "estimation",
+    "optimization"
+   ],
+   "deadlines": [
+    {
+     "what": "Abstracts",
+     "date": "2027-02-08",
+     "estimated": true
+    },
+    {
+     "what": "Travel support",
+     "date": "2027-05-03"
+    }
+   ]
+  },
+  {
+   "name": "SIAM Conference on Applied and Computational Discrete Algorithms (ACDA27, with CSE27)",
+   "short": "SIAM ACDA27",
+   "org": "SIAM",
+   "start": "2027-02-22",
+   "end": "2027-02-26",
+   "location": "Pittsburgh, PA, USA",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/acda27/",
+   "tags": [
+    "discrete algorithms",
+    "graph algorithms",
+    "combinatorial scientific computing",
+    "high-performance computing"
+   ],
+   "deadlines": [
+    {
+     "what": "Poster abstracts",
+     "date": "2026-11-09",
+     "estimated": true
+    }
+   ]
+  },
+  {
+   "name": "SIAM Conference on Financial Mathematics and Engineering (FM27)",
+   "short": "SIAM FM27",
+   "org": "SIAM",
+   "start": "2027-06-16",
+   "end": "2027-06-19",
+   "location": "TBC",
+   "url": "https://www.siam.org/conferences-events/siam-conferences/fm27/",
+   "tbc": true,
+   "tags": [
+    "financial mathematics",
+    "stochastic modeling",
+    "uncertainty quantification",
+    "machine learning"
+   ],
+   "deadlines": [
+    {
+     "what": "Minisymposium proposals",
+     "date": "2026-11-17"
+    },
+    {
+     "what": "Abstracts (contributed lecture, poster, minisymposium talks)",
+     "date": "2026-12-15"
+    },
+    {
+     "what": "Travel support",
+     "date": "2027-03-16"
+    },
+    {
+     "what": "Early registration",
+     "date": "2027-05-18"
+    }
+   ]
+  }
+ ]
 }
