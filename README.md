@@ -25,9 +25,13 @@ Open the link in Safari or Chrome → Share → **Add to Home Screen**.
 
 It's a single `index.html` with no build step. Fork the repo, enable GitHub Pages (Settings → Pages → Source: GitHub Actions), and the included workflow deploys it.
 
-## Pro tier & accounts
+## Accounts & sync (optional, free)
 
-Optional sign-in, cross-device sync and a paid Pro tier (unlimited topics) run on Supabase + Stripe. See [SETUP.md](SETUP.md).
+Sign-in and cross-device sync run on Supabase (free tier). See [SETUP.md](SETUP.md). Without it the app works fully, storing everything in the browser.
+
+## Being a good API citizen
+
+Everything is free for users; the only limits are there to avoid stressing the public APIs: up to 12 topics, results cached for 3 hours, refresh at most every 20 s, and at most 6 concurrent requests.
 
 ## License
 

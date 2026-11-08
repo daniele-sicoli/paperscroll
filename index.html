@@ -69,12 +69,8 @@
   .seg button.on{background:var(--accent);color:#06101f}
   .toast{position:fixed;left:50%;bottom:calc(24px + var(--sab));transform:translateX(-50%);background:#263246;color:var(--text);padding:10px 14px;border-radius:12px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30;pointer-events:none;max-width:90vw;text-align:center}
   .toast.show{opacity:1}
-  .pro{display:inline-block;background:linear-gradient(90deg,#ffb86b,#ff7ab6);color:#1a1020;font-size:11px;font-weight:800;padding:2px 7px;border-radius:6px;vertical-align:middle;letter-spacing:.4px}
   .acct{background:var(--bg);border-radius:12px;padding:12px;font-size:14px;line-height:1.5}
   .acct .em{color:var(--accent);word-break:break-all}
-  .upsell{background:linear-gradient(135deg,#1b2a4a,#2a1b3a);border:1px solid #3a4a7a;border-radius:14px;padding:14px;margin-top:12px}
-  .upsell h3{margin:0 0 6px;font-size:15px}
-  .upsell ul{margin:6px 0 10px;padding-left:18px;color:#cdd5e3;font-size:14px;line-height:1.5}
   .lim{font-size:12px;color:var(--accent2);margin-top:6px}
 </style>
 </head>
@@ -172,12 +168,14 @@
     saved:{}, seen:{}
   }, LS('ps_state')||{});
   if(!state.topics.length){ state.topics=['space weather', 'thermosphere density']; }
-  const FREE_TOPICS=3;
-  let user=null, isPro=false, sb=null, pushTimer=null;
+  const MAX_TOPICS=12;          // feasibility cap: every topic is a search on every source
+  const MIN_REFRESH_MS=20000;    // ↻ at most every 20 s
+  const MAX_PARALLEL=6;          // concurrent API requests
+  let user=null, sb=null, pushTimer=null;
   const cfg=window.PAPERSCROLL_CONFIG||{};
   const cloudOn=!!(cfg.SUPABASE_URL&&cfg.SUPABASE_ANON_KEY&&window.supabase);
   const save=()=>{ SS('ps_state',state); schedulePush(); };
-  const canAddTopic=()=>isPro||state.topics.length<FREE_TOPICS;
+  const canAddTopic=()=>state.topics.length<MAX_TOPICS;
 
   // per-topic paging & buffers
   let cursors={}, buffers={}, exhausted={}, loading=false, mode='feed'; // 'feed' | 'saved'
@@ -395,10 +393,15 @@
 
   // A "stream" is one topic on one source.
   const streamKey=(t,src)=>t+'\u0001'+src;
+  let inflight=0; const waiters=[];
+  const acquire=()=>new Promise(r=>{ if(inflight<MAX_PARALLEL){inflight++;r();} else waiters.push(r); });
+  const release=()=>{ if(waiters.length){ waiters.shift()(); } else inflight--; };
   async function fetchStream(t,src){
     const k=streamKey(t,src);
     if(exhausted[k]) return [];
-    const {items,next}=await SOURCES[src].fetch(t,cursors[k]);
+    await acquire(); let res;
+    try{ res=await SOURCES[src].fetch(t,cursors[k]); } finally{ release(); }
+    const {items,next}=res;
     if(next==null) exhausted[k]=true; else cursors[k]=next;
     return items.map(p=>Object.assign(p,{topic:t}));
   }
@@ -545,13 +548,13 @@
     const v=$('#newTopic').value.trim();
     if(!v) return;
     if(state.topics.includes(v)){ $('#newTopic').value=''; return; }
-    if(!canAddTopic()){ sheet.classList.remove('open'); openAccount(true); return; }
+    if(!canAddTopic()){ toast(`Max ${MAX_TOPICS} topics — remove one first (keeps the APIs happy)`); return; }
     state.topics.push(v);
     $('#newTopic').value='';save();renderTopicList();
   }
   function renderLimit(){
     const l=$('#limLabel');
-    l.textContent=isPro?'Pro: unlimited topics, synced to the cloud.':`Free plan: ${state.topics.length}/${FREE_TOPICS} topics. Upgrade for unlimited topics + sync.`;
+    l.textContent=`${state.topics.length}/${MAX_TOPICS} topics${user?' · synced to your account':''}`;
   }
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
@@ -561,28 +564,22 @@
   $('#closeSheet').onclick=closeSheet;
   sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
   $('#clearSeen').onclick=()=>{state.seen={};save();toast('Seen history cleared');};
-  $('#btnRefresh').onclick=()=>{quotaHit=null;mode='feed';renderChips();resetFeed();toast('Refreshed');};
+  let lastRefresh=0;
+  $('#btnRefresh').onclick=()=>{const now=Date.now(); if(now-lastRefresh<MIN_REFRESH_MS){toast(`Easy — refresh again in ${Math.ceil((MIN_REFRESH_MS-(now-lastRefresh))/1000)} s`);return;} lastRefresh=now; quotaHit=null;mode='feed';renderChips();resetFeed();toast('Refreshed');};
   $('#btnSaved').onclick=()=>{mode=mode==='saved'?'feed':'saved';renderChips();resetFeed();};
 
-  // ---------- account / Pro / sync ----------
+  // ---------- account / sync ----------
   const acctSheet=$('#acctSheet');
   $('#closeAcct').onclick=()=>acctSheet.classList.remove('open');
   acctSheet.addEventListener('click',e=>{if(e.target===acctSheet)acctSheet.classList.remove('open')});
-  $('#btnAccount').onclick=()=>openAccount(false);
+  $('#btnAccount').onclick=()=>openAccount();
 
-  function upgradeUrl(){
-    if(!cfg.STRIPE_PAYMENT_LINK||!user) return '#';
-    const u=new URL(cfg.STRIPE_PAYMENT_LINK);
-    u.searchParams.set('client_reference_id',user.id);
-    if(user.email) u.searchParams.set('prefilled_email',user.email);
-    return u.toString();
-  }
-  function openAccount(upsell){
+  function openAccount(){
     const b=$('#acctBody');
     if(!cloudOn){
-      b.innerHTML=`<div class="acct">Accounts aren't configured on this deployment yet, so topics and saved papers live only in this browser.</div>`;
+      b.innerHTML=`<div class="acct">Everything is stored in this browser. Cross-device sync will appear here once it's set up on this deployment.</div>`;
     } else if(!user){
-      b.innerHTML=`${upsell?`<div class="acct">You've reached the free limit of ${FREE_TOPICS} topics. Sign in to upgrade.</div>`:''}
+      b.innerHTML=`<div class="acct">Sign in to sync topics, saved papers and history across your devices. Free, no password.</div>
         <label>Email</label><input id="loginEmail" type="email" placeholder="you@university.edu" autocomplete="email">
         <div class="hint">We'll email you a one-tap sign-in link. No password.</div>
         <button class="primary" id="sendLink" style="margin-top:10px;width:100%">Send sign-in link</button>`;
@@ -594,25 +591,13 @@
         else b.innerHTML=`<div class="acct">Check <span class="em">${esc(email)}</span> for your sign-in link. Open it on this device.</div>`;
       };
     } else {
-      b.innerHTML=`<div class="acct">Signed in as <span class="em">${esc(user.email||'')}</span> ${isPro?'<span class="pro">PRO</span>':''}<br>
-        ${isPro?'Unlimited topics · synced across your devices.':`Free plan: ${FREE_TOPICS} topics, saved on this device and synced.`}</div>
-        ${isPro?'':`<div class="upsell"><h3>PaperScroll Pro <span class="pro">${esc(cfg.PRO_PRICE_LABEL||'')}</span></h3>
-          <ul><li>Unlimited topics</li><li>Topics, saved papers and history synced across devices</li><li>Supports development</li></ul>
-          <a class="primary" href="${upgradeUrl()}" style="display:block;text-align:center;text-decoration:none;background:var(--accent);color:#06101f;font-weight:700;padding:11px;border-radius:12px">Upgrade to Pro</a>
-          <div class="hint">Already paid? <a href="#" id="recheck" style="color:var(--accent)">Refresh status</a></div></div>`}
+      b.innerHTML=`<div class="acct">Signed in as <span class="em">${esc(user.email||'')}</span><br>Your topics, saved papers and history sync across devices. Free.</div>
         <button id="signOut" style="margin-top:12px;width:100%">Sign out</button>`;
-      $('#signOut').onclick=async()=>{ await sb.auth.signOut(); user=null; isPro=false; acctSheet.classList.remove('open'); renderChips(); toast('Signed out'); };
-      const rc=$('#recheck'); if(rc) rc.onclick=async e=>{e.preventDefault(); await loadProfile(); openAccount(false); toast(isPro?'Pro active — thank you!':'Not upgraded yet');};
+      $('#signOut').onclick=async()=>{ await sb.auth.signOut(); user=null; acctSheet.classList.remove('open'); renderChips(); toast('Signed out'); };
     }
     acctSheet.classList.add('open');
   }
 
-  async function loadProfile(){
-    if(!sb||!user) return;
-    const {data}=await sb.from('profiles').select('is_pro').eq('user_id',user.id).maybeSingle();
-    isPro=!!(data&&data.is_pro);
-    renderLimit();
-  }
   async function pullAndMerge(){
     if(!sb||!user) return;
     const {data}=await sb.from('user_data').select('topics,saved,seen,settings').eq('user_id',user.id).maybeSingle();
@@ -638,16 +623,11 @@
     if(!cloudOn) return;
     sb=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY);
     const {data:{session}}=await sb.auth.getSession();
-    if(session){ user=session.user; await loadProfile(); await pullAndMerge(); }
+    if(session){ user=session.user; await pullAndMerge(); }
     sb.auth.onAuthStateChange(async(ev,sess)=>{
-      if(sess&&sess.user&&(!user||user.id!==sess.user.id)){ user=sess.user; await loadProfile(); await pullAndMerge(); toast('Signed in'); }
-      if(!sess){ user=null; isPro=false; }
+      if(sess&&sess.user&&(!user||user.id!==sess.user.id)){ user=sess.user; await pullAndMerge(); toast('Signed in'); }
+      if(!sess){ user=null; }
     });
-    if(location.hash==='#pro-success'){
-      history.replaceState(null,'',location.pathname);
-      for(let i=0;i<6&&!isPro;i++){ await new Promise(r=>setTimeout(r,2000)); await loadProfile(); }
-      toast(isPro?'Pro activated — thank you!':'Payment received; Pro will activate shortly.');
-    }
   }
 
   // ---------- boot ----------
