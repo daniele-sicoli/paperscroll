@@ -157,6 +157,11 @@
     <input id="adsKey" type="password" placeholder="Paste your free ADS token" autocomplete="off">
     <div class="hint">Free: sign in at <a href="https://ui.adsabs.harvard.edu/user/settings/token" target="_blank" rel="noopener" style="color:var(--accent)">ui.adsabs.harvard.edu → Settings → API Token</a>. 5,000 queries/day. Stays on this device only.</div>
 
+    <label>Reading voice &amp; speed</label>
+    <div class="row"><select id="voiceSel" style="flex:1"><option value="">Automatic (best English voice)</option></select></div>
+    <div class="row" style="margin-top:8px;gap:10px"><span class="hint" style="margin:0;white-space:nowrap">Speed</span><input id="rateSel" type="range" min="0.8" max="1.5" step="0.05" style="flex:1"><span class="hint" id="rateVal" style="margin:0;min-width:40px;text-align:right">1.0×</span></div>
+    <div class="hint">Tip: on iPhone, download an <b>Enhanced</b> or <b>Premium</b> voice (Settings → Accessibility → Spoken Content → Voices → English) — it appears here and sounds far more natural.</div>
+
     <label>Cloud voice (optional) — OpenAI API key</label>
     <input id="ttsKey" type="password" placeholder="sk-… enables a natural voice that keeps playing with the screen locked" autocomplete="off">
     <div class="row" style="margin-top:6px"><select id="ttsVoice" style="flex:1">
@@ -648,7 +653,7 @@
     return plan;
   }
   function stopSpeaking(){ speakSeq++; clearTimeout(speakTimer); ttsStop(); try{speechSynthesis.cancel();}catch(e){} if(speakingEl){ const b=speakingEl.querySelector('.listen'); if(b) b.textContent='🔊 Listen'; } speakingEl=null; }
-  function pickVoice(){ const vs=speechSynthesis.getVoices(); return vs.find(v=>/en[-_](US|GB)/i.test(v.lang)&&/Siri|Samantha|Daniel|Ava|Zoe|Google (US|UK)|Natural|Premium|Enhanced/i.test(v.name))||vs.find(v=>/^en/i.test(v.lang))||null; }
+  function pickVoice(){ const vs=speechSynthesis.getVoices(); if(state.speechVoice){ const v=vs.find(v=>v.name===state.speechVoice); if(v) return v; } return vs.find(v=>/en[-_](US|GB)/i.test(v.lang)&&/Siri|Samantha|Daniel|Ava|Zoe|Google (US|UK)|Natural|Premium|Enhanced/i.test(v.name))||vs.find(v=>/^en/i.test(v.lang))||null; }
   // ---------- cloud voice (OpenAI TTS → real audio; survives screen lock, lock-screen controls) ----------
   const ttsCache=new Map(); // paper id → Promise<blob URL>
   let ttsAudio=null, ttsSeq=0, ttsPrefetching=null;
@@ -712,7 +717,7 @@
       if(seq!==speakSeq) return;
       if(i>=plan.length){ if(autoplay){ advanceAutoplay(el); } else stopSpeaking(); return; }
       const step=plan[i++];
-      const u=new SpeechSynthesisUtterance(step.text); u.lang='en-US'; u.rate=step.rate; u.pitch=step.pitch; if(voice) u.voice=voice;
+      const u=new SpeechSynthesisUtterance(step.text); u.lang=(voice&&voice.lang)||'en-US'; u.rate=Math.min(2,step.rate*(state.speechRate||1)); u.pitch=step.pitch; if(voice) u.voice=voice;
       let ended=false; const done=()=>{ if(ended) return; ended=true; if(seq===speakSeq) speakTimer=setTimeout(next,step.pause); };
       u.onend=done;
       const est=Math.max(1500,step.text.length*75/step.rate+step.pause+1500); setTimeout(()=>{ if(!ended&&seq===speakSeq&&!speechSynthesis.speaking){ done(); } },est);
@@ -952,8 +957,11 @@
   $('#addTopic').onclick=addTopic;
   $('#newTopic').addEventListener('keydown',e=>{if(e.key==='Enter')addTopic()});
   function renderSrcSeg(){ const en=enabledSources(); [...$('#srcSeg').children].forEach(b=>{ b.classList.toggle('on',en.includes(b.dataset.v)); b.onclick=()=>{ let cur=enabledSources().slice(); if(cur.includes(b.dataset.v)){ if(cur.length===1){toast('Keep at least one source');return;} cur=cur.filter(x=>x!==b.dataset.v);} else { if(b.dataset.v==='ads'&&!($('#adsKey').value.trim()||state.adsKey)){ toast('Paste your NASA ADS token below first'); $('#adsKey').focus(); return; } cur.push(b.dataset.v); } state.sources=cur; save(); renderSrcSeg(); }; }); }
-  $('#btnTopics').onclick=()=>{$('#oaKey').value=state.oaKey||'';$('#adsKey').value=state.adsKey||'';$('#ttsKey').value=state.ttsKey||'';$('#ttsVoice').value=state.ttsVoice||'nova';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');sheet.classList.add('open');};
-  const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} const a=$('#adsKey').value.trim(); if(a!==(state.adsKey||'')){state.adsKey=a; SS('ps_state',state);} const tk=$('#ttsKey').value.trim(), tv=$('#ttsVoice').value; if(tk!==(state.ttsKey||'')||tv!==(state.ttsVoice||'nova')){state.ttsKey=tk; state.ttsVoice=tv; SS('ps_state',state); ttsCache.clear();} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
+  function fillVoices(){ const sel=$('#voiceSel'); const cur=state.speechVoice||''; const vs=('speechSynthesis' in window)?speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang)):[]; sel.innerHTML='<option value="">Automatic (best English voice)</option>'+vs.sort((a,b)=>a.name.localeCompare(b.name)).map(v=>`<option value="${esc(v.name)}"${v.name===cur?' selected':''}>${esc(v.name)} · ${esc(v.lang)}${/enhanced|premium|siri|natural/i.test(v.name)?' ★':''}</option>`).join(''); }
+  if('speechSynthesis' in window){ speechSynthesis.addEventListener('voiceschanged',fillVoices); }
+  $('#rateSel').addEventListener('input',()=>{ $('#rateVal').textContent=(+$('#rateSel').value).toFixed(2).replace(/0$/,'')+'×'; });
+  $('#btnTopics').onclick=()=>{fillVoices(); $('#rateSel').value=state.speechRate||1; $('#rateVal').textContent=(+(state.speechRate||1)).toFixed(2).replace(/0$/,'')+'×';$('#oaKey').value=state.oaKey||'';$('#adsKey').value=state.adsKey||'';$('#ttsKey').value=state.ttsKey||'';$('#ttsVoice').value=state.ttsVoice||'nova';renderSrcSeg();renderTopicList();seg('#sortSeg','sort');seg('#fieldSeg','field');sheet.classList.add('open');};
+  const closeSheet=()=>{const k=$('#oaKey').value.trim(); if(k!==(state.oaKey||'')){state.oaKey=k; SS('ps_state',state); quotaHit=null;} const a=$('#adsKey').value.trim(); if(a!==(state.adsKey||'')){state.adsKey=a; SS('ps_state',state);} const sv=$('#voiceSel').value, sr=+$('#rateSel').value; if(sv!==(state.speechVoice||'')||sr!==(state.speechRate||1)){ state.speechVoice=sv; state.speechRate=sr; SS('ps_state',state); } const tk=$('#ttsKey').value.trim(), tv=$('#ttsVoice').value; if(tk!==(state.ttsKey||'')||tv!==(state.ttsVoice||'nova')){state.ttsKey=tk; state.ttsVoice=tv; SS('ps_state',state); ttsCache.clear();} sheet.classList.remove('open');mode='feed';if(state.active&&!state.topics.includes(state.active))state.active=null;save();renderChips();resetFeed();};
   $('#closeSheet').onclick=closeSheet;
   sheet.addEventListener('click',e=>{if(e.target===sheet)closeSheet()});
   $('#clearSeen').onclick=()=>{state.seen={};save();toast('Seen history cleared');};
