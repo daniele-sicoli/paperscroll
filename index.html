@@ -300,6 +300,8 @@
   // ---------- sources ----------
   // Each source: fetch(topic, cursorState) -> {items:[normalized paper], next:cursorState|null}
   const today=()=>new Date().toISOString().slice(0,10);
+  // Journals assign issue dates ahead of time: accept publication dates up to 90 days in the future.
+  const horizon=()=>new Date(Date.now()+90*86400000).toISOString().slice(0,10);
   const normTitle=t=>t.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,80);
   const dedupKey=p=>p.doi?('doi:'+p.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//,'')):('t:'+normTitle(p.title));
   // Remove PDF-extraction artifacts such as "(cid:12)" and stray control characters.
@@ -338,7 +340,7 @@
       async fetch(topic,cur){
         const page=(cur||0)+1;
         const pt=parseTopic(topic);
-        const filters=['to_publication_date:'+today(),'type:article|preprint|review'];
+        const filters=['to_publication_date:'+horizon(),'type:article|preprint|review'];
         if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); filters.push(KINDS[pt.kind].oaFilter+':'+e.id); if(pt.kind!=='journal') filters.push('has_abstract:true'); }
         else filters.push('has_abstract:true');
         let search='';
@@ -390,7 +392,7 @@
         const off=cur||0;
         const pt=parseTopic(topic);
         const sort={submittedDate:'published&order=desc',lastUpdatedDate:'is-referenced-by-count&order=desc',relevance:'relevance&order=desc'}[state.sort];
-        let filter=`until-pub-date:${today()},type:journal-article,type:posted-content`;
+        let filter=`until-pub-date:${horizon()},type:journal-article,type:posted-content`;
         let query='';
         if(pt.kind==='journal'){ const j=await resolveEntity('journal',pt.name); if(!j.issn) return {items:[],next:null}; filter+=`,issn:${j.issn}`; }
         else filter+=',has-abstract:true';
@@ -477,7 +479,7 @@
     try{ res=await SOURCES[src].fetch(t,cursors[k]); } finally{ release(); }
     const {items,next}=res;
     if(next==null) exhausted[k]=true; else cursors[k]=next;
-    const td=today();
+    const td=horizon();
     return items.filter(p=>!p.published||p.published.slice(0,10)<=td).map(p=>Object.assign(p,{topic:t,summary:cleanText(p.summary),title:cleanText(p.title)}));
   }
 
@@ -704,7 +706,7 @@
   $('#btnLand').onclick=()=>{ if(state.active&&state.topics.includes(state.active)) openLandscape(state.active); else toast('Select a topic chip first, then tap 📊'); };
 
   async function oaTopicFilters(topic){
-    const pt=parseTopic(topic); const f=['type:article|preprint|review','to_publication_date:'+today()];
+    const pt=parseTopic(topic); const f=['type:article|preprint|review','to_publication_date:'+horizon()];
     if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); f.push(KINDS[pt.kind].oaFilter+':'+e.id); }
     if(pt.kw) f.push('title_and_abstract.search:'+encodeURIComponent(searchTerm(pt.kw)));
     return f;
