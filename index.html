@@ -264,6 +264,8 @@
   const today=()=>new Date().toISOString().slice(0,10);
   const normTitle=t=>t.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,80);
   const dedupKey=p=>p.doi?('doi:'+p.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//,'')):('t:'+normTitle(p.title));
+  // Remove PDF-extraction artifacts such as "(cid:12)" and stray control characters.
+  const cleanText=t=>String(t||'').replace(/\(cid:\d+\)/g,'�').replace(/�(\s*�)+/g,'�').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'').replace(/\s+/g,' ').trim();
   const stripTags=h=>String(h||'').replace(/<[^>]+>/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();
 
   // Follows: "journal:Nature", "author:Daniele Sicoli", "institution:West Virginia University",
@@ -406,7 +408,8 @@
     try{ res=await SOURCES[src].fetch(t,cursors[k]); } finally{ release(); }
     const {items,next}=res;
     if(next==null) exhausted[k]=true; else cursors[k]=next;
-    return items.map(p=>Object.assign(p,{topic:t}));
+    const td=today();
+    return items.filter(p=>!p.published||p.published.slice(0,10)<=td).map(p=>Object.assign(p,{topic:t,summary:cleanText(p.summary),title:cleanText(p.title)}));
   }
 
   // A selected chip shows only that topic; "All" shows every topic interleaved.
