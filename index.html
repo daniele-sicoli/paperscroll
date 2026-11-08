@@ -547,7 +547,7 @@
       let got=flush();                      // anything left over from last time shows immediately
       for(let hop=0; hop<8 && !got && !exhausted[k]; hop++){
         try{ const page=await fetchStream(t,src); failures[k]=0; okStreams++;
-          buffers[k].push(...page.filter(p=>!state.seen[p.id]&&!shown.has(p.id)&&relevant(p,t)));
+          buffers[k].push(...page.filter(p=>(mode==='search'||!state.seen[p.id])&&!shown.has(p.id)&&relevant(p,t)));
           got=flush(); }
         catch(e){ console.warn(src,e); lastError=e; if(e.quota){ exhausted[k]=true; break; } failures[k]=(failures[k]||0)+1; if(failures[k]>=2){ exhausted[k]=true; } break; }
       }
@@ -686,7 +686,7 @@
     const el=e.target;
     if(e.isIntersecting && e.intersectionRatio>.6){
       clearTimeout(el._seenT);
-      el._seenT=setTimeout(()=>{ const id=el.dataset.id; if(id&&!state.seen[id]){state.seen[id]=1; if(Object.keys(state.seen).length>3000){state.seen={};} save();} },1500);
+      el._seenT=setTimeout(()=>{ if(mode==='search') return; const id=el.dataset.id; if(id&&!state.seen[id]){state.seen[id]=1; if(Object.keys(state.seen).length>3000){state.seen={};} save();} },1500);
     } else clearTimeout(el._seenT);
   }),{root:feed,threshold:[.6]});
   new MutationObserver(ms=>ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.classList?.contains('card')) io.observe(n)}))).observe(feed,{childList:true});
