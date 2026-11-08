@@ -340,7 +340,7 @@
       async fetch(topic,cur){
         const page=(cur||0)+1;
         const pt=parseTopic(topic);
-        const filters=['to_publication_date:'+horizon(),'type:!dataset|paratext|libguides|grant|peer-review|erratum|retraction|supplementary-materials|reference-entry|standard'];
+        const filters=['to_publication_date:'+horizon(),'type:!dataset,type:!paratext,type:!libguides,type:!grant,type:!peer-review,type:!erratum,type:!retraction,type:!supplementary-materials,type:!reference-entry'];
         if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); filters.push(KINDS[pt.kind].oaFilter+':'+e.id); if(pt.kind!=='journal') filters.push('has_abstract:true'); }
         else filters.push('has_abstract:true');
         let search='';
@@ -706,7 +706,7 @@
   $('#btnLand').onclick=()=>{ if(state.active&&state.topics.includes(state.active)) openLandscape(state.active); else toast('Select a topic chip first, then tap 📊'); };
 
   async function oaTopicFilters(topic){
-    const pt=parseTopic(topic); const f=['type:!dataset|paratext|libguides|grant|peer-review|erratum|retraction|supplementary-materials|reference-entry|standard','to_publication_date:'+horizon()];
+    const pt=parseTopic(topic); const f=['type:!dataset,type:!paratext,type:!libguides,type:!grant,type:!peer-review,type:!erratum,type:!retraction,type:!supplementary-materials,type:!reference-entry','to_publication_date:'+horizon()];
     if(pt.kind){ const e=await resolveEntity(pt.kind,pt.name); f.push(KINDS[pt.kind].oaFilter+':'+e.id); }
     if(pt.kw) f.push('title_and_abstract.search:'+encodeURIComponent(searchTerm(pt.kw)));
     return f;
