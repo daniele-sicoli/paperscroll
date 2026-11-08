@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0b0f17">
+<meta name="build" content="__BUILD__">
 <title>PaperScroll</title>
 <style>
   :root{
@@ -680,7 +681,24 @@
     });
   }
 
+  // ---------- update check (home-screen apps cache aggressively) ----------
+  const BUILD=(document.querySelector('meta[name=build]')||{}).content||'';
+  async function checkUpdate(){
+    if(!BUILD||BUILD==='__BUILD__') return;
+    try{
+      const r=await fetch('version.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) return;
+      const j=await r.json();
+      if(j.build&&j.build!==BUILD){
+        if(!feed.querySelector('.card')) return location.reload();
+        const t=$('#toast'); t.innerHTML='New version available — <b>tap to update</b>'; t.style.pointerEvents='auto'; t.classList.add('show'); clearTimeout(t._h);
+        t.onclick=()=>location.reload();
+      }
+    }catch(e){}
+  }
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') checkUpdate(); });
+
   // ---------- boot ----------
+  checkUpdate();
   initCloud();
   save();renderChips();resetFeed();
 })();
