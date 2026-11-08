@@ -98,16 +98,15 @@
 <header>
   <div class="row">
     <h1>Paper<span>Scroll</span></h1>
-    <button class="icon" id="btnSearch" title="Search">🔍</button>
     <button class="icon" id="btnLand" title="Landscape">📊</button>
     <button class="icon" id="btnAccount" title="Account">👤</button>
     <button class="icon" id="btnSaved" title="Saved">🔖</button>
     <button class="icon" id="btnRefresh" title="Refresh">↻</button>
     <button class="primary" id="btnTopics">Topics</button>
   </div>
-  <div class="row" id="searchRow" style="display:none;margin-top:8px">
-    <input id="searchInput" type="search" placeholder="Search papers… (any words, author, title, DOI)" autocomplete="off" style="flex:1;padding:9px 12px">
-    <button class="primary" id="searchGo">Go</button>
+  <div class="row" id="searchRow" style="margin-top:8px">
+    <input id="searchInput" type="search" placeholder="🔍 Search papers — words, authors, titles…" autocomplete="off" style="flex:1;padding:9px 12px">
+    <button id="searchGo">Go</button>
   </div>
   <div class="chips" id="chips"></div>
   <div id="savedBar" style="display:none"></div>
@@ -694,7 +693,7 @@
     });
     if(mode==='search'&&searchQ){
       const sc=document.createElement('span');sc.className='chip on';sc.innerHTML=`🔍 ${esc(searchQ)} <span class="x">✕</span>`;
-      sc.onclick=()=>{mode='feed';searchQ='';$('#searchRow').style.display='none';renderChips();resetFeed();};
+      sc.onclick=()=>{mode='feed';searchQ='';searchInput.value='';renderChips();resetFeed();};
       chipsEl.appendChild(sc);
       if(!state.topics.includes(searchQ)){
         const add=document.createElement('span');add.className='chip';add.style.color='var(--ok)';add.textContent='+ Save as topic';
@@ -749,14 +748,14 @@
 
   // ---------- quick search ----------
   const searchRow=$('#searchRow'), searchInput=$('#searchInput');
-  $('#btnSearch').onclick=()=>{ const open=searchRow.style.display!=='none'; searchRow.style.display=open?'none':''; if(!open){ searchInput.focus(); } };
   function runSearch(){
     const q=searchInput.value.trim(); if(!q) return;
     searchQ=q; mode='search'; searchInput.blur();
     renderChips(); resetFeed();
   }
   $('#searchGo').onclick=runSearch;
-  searchInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); runSearch(); } });
+  searchInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); if(!searchInput.value.trim()&&mode==='search'){ mode='feed'; searchQ=''; renderChips(); resetFeed(); } else runSearch(); } });
+  searchInput.addEventListener('search',()=>{ if(!searchInput.value.trim()&&mode==='search'){ mode='feed'; searchQ=''; renderChips(); resetFeed(); } });
 
   // ---------- landscape: state of the art for a topic ----------
   const landSheet=$('#landSheet');
