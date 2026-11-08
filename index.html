@@ -112,7 +112,7 @@
       <input id="newTopic" placeholder='e.g. thermosphere density, "SINDy", space weather'>
       <button class="primary" id="addTopic">Add</button>
     </div>
-    <div class="hint">Each topic is searched on every enabled source below. Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>. Follow a journal, author or institution: <code>journal:Nature</code>, <code>author:Daniele Sicoli</code>, <code>institution:West Virginia University</code> — add <code>| keywords</code> to filter inside, e.g. <code>journal:Nature | space weather</code>.</div>
+    <div class="hint">Each topic is searched on every enabled source below. Just type keywords — word variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only if the keywords appear close together in the title or abstract. For precise control use quotes and AND / OR / NOT, e.g. <code>"thermospheric density" AND (SINDy OR "reduced order")</code>. Follow a research line, journal, author or institution: <code>field:Thermospheric density modeling</code>, <code>journal:Nature</code>, <code>author:Daniele Sicoli</code>, <code>institution:West Virginia University</code> — add <code>| keywords</code> to filter inside, e.g. <code>journal:Nature | space weather</code>.</div>
     <div class="topiclist" id="topicList"></div>
     <div class="lim" id="limLabel"></div>
 
@@ -274,6 +274,7 @@
       const al=(p.authors||[]).join(' | ').toLowerCase();
       if(sur&&!al.includes(sur)) return false;
     }
+    if(pt.kind==='field'&&p.src!=='OpenAlex'){ if(!relevant(p,pt.name)) return false; }
     if(pt.kind){ if(!pt.kw) return true; topic=pt.kw; }
     if(hasOps(topic)) return true;
     const ks=[...new Set(keywords(topic).map(stem))];
@@ -301,13 +302,14 @@
 
   // Follows: "journal:Nature", "author:Daniele Sicoli", "institution:West Virginia University",
   // each optionally filtered with "| keywords".
-  const KINDS={journal:{ep:'sources',icon:'📰',oaFilter:'primary_location.source.id'},
+  const KINDS={field:{ep:'topics',icon:'🧭',oaFilter:'primary_topic.id'},
+               journal:{ep:'sources',icon:'📰',oaFilter:'primary_location.source.id'},
                author:{ep:'authors',icon:'👤',oaFilter:'authorships.author.id'},
                institution:{ep:'institutions',icon:'🏛️',oaFilter:'authorships.institutions.id'}};
   function parseTopic(t){
-    const m=/^\s*(journal|author|institution|inst|affiliation)\s*:\s*([^|]+?)\s*(?:\|\s*(.+))?$/i.exec(t);
+    const m=/^\s*(journal|author|institution|inst|affiliation|field|line)\s*:\s*([^|]+?)\s*(?:\|\s*(.+))?$/i.exec(t);
     if(!m) return {kind:null,name:null,kw:t};
-    let kind=m[1].toLowerCase(); if(kind==='inst'||kind==='affiliation') kind='institution';
+    let kind=m[1].toLowerCase(); if(kind==='inst'||kind==='affiliation') kind='institution'; if(kind==='line') kind='field';
     return {kind,name:m[2].trim(),kw:(m[3]||'').trim()};
   }
   const ecache={};
@@ -355,9 +357,9 @@
       }},
     s2:{ label:'Semantic Scholar',
       async fetch(topic,cur){
-        const pt=parseTopic(topic); if(pt.kind) return {items:[],next:null};
+        const pt=parseTopic(topic); if(pt.kind&&pt.kind!=='field') return {items:[],next:null};
         const fields='title,abstract,authors,publicationDate,year,externalIds,openAccessPdf,venue,citationCount,url';
-        const q=encodeURIComponent(searchTerm(pt.kw));
+        const q=encodeURIComponent(searchTerm(pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw));
         let data, items, next;
         if(state.sort==='relevance'){
           const off=cur||0;
@@ -388,7 +390,8 @@
         else filter+=',has-abstract:true';
         if(pt.kind==='author') query+='&query.author='+encodeURIComponent(pt.name);
         if(pt.kind==='institution') query+='&query.affiliation='+encodeURIComponent(pt.name);
-        if(pt.kw) query+='&query.bibliographic='+encodeURIComponent(keywords(pt.kw).join(' ')||pt.kw);
+        const ckw=pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw;
+        if(ckw) query+='&query.bibliographic='+encodeURIComponent(keywords(ckw).join(' ')||ckw);
         const mailto=cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'';
         const data=await getJSON(`https://api.crossref.org/works?${query.slice(1)}${query?'&':''}filter=${filter}&sort=${sort}&rows=${PER}&offset=${off}&select=DOI,title,abstract,author,issued,container-title,is-referenced-by-count,URL,link,subtype${mailto}`);
         const results=data.message?.items||[];
@@ -406,7 +409,8 @@
       async fetch(topic,cur){
         const pt=parseTopic(topic); if(pt.kind==='journal') return {items:[],next:null};
         const parts=[];
-        if(pt.kw) parts.push('('+(hasOps(pt.kw)?pt.kw:keywords(pt.kw).join(' AND '))+')');
+        const ekw=pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw;
+        if(ekw) parts.push('('+(hasOps(ekw)?ekw:keywords(ekw).join(' AND '))+')');
         if(pt.kind==='author') parts.push(`AUTH:"${pt.name}"`);
         if(pt.kind==='institution') parts.push(`AFF:"${pt.name}"`);
         const q=encodeURIComponent(`${parts.join(' AND ')} AND HAS_ABSTRACT:Y AND (SRC:MED OR SRC:PPR OR SRC:PMC)`);
@@ -428,7 +432,8 @@
     async fetch(topic,cur){
       if(!state.adsKey) return {items:[],next:null};
       const pt=parseTopic(topic); const q=[];
-      if(pt.kw){ q.push(hasOps(pt.kw)?`abs:(${pt.kw})`:`abs:(${keywords(pt.kw).join(' ')})`); }
+      const akw=pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw;
+      if(akw){ q.push(hasOps(akw)?`abs:(${akw})`:`abs:(${keywords(akw).join(' ')})`); }
       if(pt.kind==='author'){ const parts=pt.name.trim().split(/\s+/); const last=parts.pop(); q.push(`author:"${last}${parts.length?', '+parts.join(' '):''}"`); }
       if(pt.kind==='institution') q.push(`aff:"${pt.name}"`);
       if(pt.kind==='journal') q.push(`pub:"${pt.name}"`);
@@ -725,14 +730,22 @@
         soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`sort=cited_by_count:desc&per-page=8&select=${sel}`)),
         soft(oaList([...base,'type:review'],`sort=publication_date:desc&per-page=6&select=${sel}`))
       ]);
-      const [authors,insts,years,kws]=await Promise.all([
+      const [authors,insts,years,kws,linesAll,linesRecent]=await Promise.all([
         soft(oaList(base,`group_by=authorships.author.id`)),
+        soft(oaList(base,`group_by=primary_topic.id`)),
+        soft(oaList([...base,`from_publication_date:${y-2}-01-01`],`group_by=primary_topic.id`)),
         soft(oaList(base,`group_by=authorships.institutions.id`)),
         soft(oaList([...base,`publication_year:>${y-15}`],`group_by=publication_year`)),
         soft(oaList(base,`group_by=keywords.id`))
       ]);
       const selfName=pt.kind==='author'?pt.name.toLowerCase():''; const selfName0=selfName;
       const total=(found.meta&&found.meta.count)||0;
+      // Lines of work: OpenAlex research topics within this field, with recent share to flag what's heating up.
+      const recMap=new Map((linesRecent.group_by||[]).map(g=>[g.key,g.count]));
+      const allLines=(linesAll.group_by||[]).filter(g=>g.key_display_name&&!(pt.kind==='field'&&g.key_display_name===pt.name));
+      const sumAll=allLines.reduce((a,g)=>a+g.count,0)||1, sumRec=[...recMap.values()].reduce((a,b)=>a+b,0)||1;
+      const avgShare=sumRec/sumAll;
+      const lines=allLines.slice(0,14).map(g=>{const r=recMap.get(g.key)||0; return {name:g.key_display_name,n:g.count,r,heat:(r/Math.max(g.count,1))/avgShare};});
       const topW=(top.results||[]); const topN=(top.meta&&top.meta.count)||topW.length;
       const tally=(get)=>{ const m=new Map(); for(const w of topW){ const seen=new Set(); for(const n of get(w)){ if(!n||seen.has(n)) continue; seen.add(n); const e=m.get(n)||{n:0,f:0}; e.n++; e.f+=w.fwci||0; m.set(n,e);} } return [...m].sort((a,b)=>b[1].n-a[1].n||b[1].f-a[1].f); };
       const impAuth=tally(w=>(w.authorships||[]).map(a=>a.author?.display_name)).filter(([n])=>n.toLowerCase()!==selfName0).slice(0,10);
@@ -748,6 +761,9 @@
         <h3>Trend · papers per year</h3>
         <div class="trend">${yrs.map(g=>`<div style="height:${Math.round(100*g.n/max)}%" title="${g.y}: ${g.n}"><i>${String(g.y).slice(2)}</i></div>`).join('')}</div>
         <div style="height:14px"></div>
+        <h3>Lines of work · research threads in this field</h3>
+        <div class="sub">Share of all papers · 🔥 = growing faster than the field since ${y-2} · tap to follow</div>
+        <div class="who">${lines.map(l=>`<button data-k="field" data-n="${esc(l.name)}"><b>${esc(l.name)}</b><span>${Math.round(100*l.n/sumAll)}%${l.heat>1.3?' 🔥':l.heat<0.6?' ·cooling':''}</span></button>`).join('')||'<div class="sub">—</div>'}</div>
         <h3>Rising · most cited since ${y-2}</h3>${(rising.results||[]).map(paperRow).join('')||'<div class="sub">—</div>'}
         <h3>Punching above weight · recent papers with the highest field-normalized impact</h3>
         <div class="sub">"×" = citations relative to papers of the same field and age (FWCI). Among ${topN.toLocaleString()} papers since ${y-5} in the field's top 10%.</div>${topByFwci.map(paperRow).join('')||'<div class="sub">—</div>'}
