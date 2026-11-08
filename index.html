@@ -440,6 +440,43 @@
     const n=Object.keys(state.seen).length;
     return `<div class="empty">You're caught up — you've already seen the ${n} most recent papers for these topics.<br><br><button id="resetSeenInline" class="primary">Show them again</button><br><br>Or add a new topic, or switch sort to <b>Most cited</b>.</div>`;
   }
+  // ---------- export / import of saved papers ----------
+  const bibEsc=s=>String(s||'').replace(/[{}]/g,'').replace(/([&%$#_])/g,'\\$1');
+  function toBibTeX(list){
+    const used=new Set();
+    return list.map(p=>{
+      const year=(p.published||'').slice(0,4)||'nd';
+      const sur=((p.authors[0]||'Unknown').split(' ').pop()||'Unknown').replace(/[^A-Za-z]/g,'');
+      const word=((p.title||'').match(/[A-Za-z]{4,}/)||['paper'])[0].toLowerCase();
+      let key=`${sur}${year}${word}`, i=2; while(used.has(key)) key=`${sur}${year}${word}${i++}`; used.add(key);
+      const doi=(p.doi||'').replace(/^https?:\/\/doi\.org\//,'');
+      const type=/arxiv/i.test(p.cat||'')||/preprint/i.test(p.cat||'')?'misc':'article';
+      const f=[['title',p.title],['author',p.authors.join(' and ')],['year',year],
+        type==='article'?['journal',p.cat]:['howpublished',p.cat],['doi',doi],['url',p.url],['abstract',p.summary]].filter(x=>x[1]);
+      return `@${type}{${key},\n`+f.map(([k,v])=>`  ${k} = {${bibEsc(v)}}`).join(',\n')+'\n}';
+    }).join('\n\n');
+  }
+  async function shareOrDownload(name,text,mime){
+    const blob=new Blob([text],{type:mime}); const file=new File([blob],name,{type:mime});
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){ try{ await navigator.share({files:[file],title:name}); return; }catch(e){ if(e.name==='AbortError') return; } }
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+  }
+  function savedToolbar(list){
+    const d=document.createElement('div'); d.className='row'; d.style.cssText='padding:12px 14px 0;gap:8px;flex-wrap:wrap';
+    d.innerHTML=`<button id="expBib" ${list.length?'':'disabled'}>Copy BibTeX</button><button id="expJson" ${list.length?'':'disabled'}>Export backup</button><button id="impJson">Import backup</button><input id="impFile" type="file" accept=".json,application/json" style="display:none">`;
+    d.querySelector('#expBib').onclick=()=>{ const bib=toBibTeX(list); (navigator.clipboard?.writeText(bib)||Promise.reject()).then(()=>toast(`Copied ${list.length} entries — in Zotero: File → Import from Clipboard`)).catch(()=>shareOrDownload('paperscroll.bib',bib,'application/x-bibtex')); };
+    d.querySelector('#expJson').onclick=()=>shareOrDownload(`paperscroll-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify({version:1,exported:new Date().toISOString(),topics:state.topics,saved:state.saved,settings:{sort:state.sort,field:state.field,sources:state.sources}},null,1),'application/json');
+    const inp=d.querySelector('#impFile');
+    d.querySelector('#impJson').onclick=()=>inp.click();
+    inp.onchange=async()=>{ const f=inp.files[0]; if(!f) return;
+      try{ const j=JSON.parse(await f.text()); let n=0;
+        for(const [id,p] of Object.entries(j.saved||{})) if(!state.saved[id]){ state.saved[id]=p; n++; }
+        for(const t of (j.topics||[])) if(!state.topics.includes(t)&&state.topics.length<MAX_TOPICS) state.topics.push(t);
+        save(); toast(`Imported ${n} saved paper${n===1?'':'s'}`); renderChips(); resetFeed();
+      }catch(e){ toast('That file is not a PaperScroll backup'); } };
+    return d;
+  }
+
   function quotaMsg(){
     const t=new Date(quotaHit).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
     return `<div class="empty">OpenAlex's free daily quota is used up (resets at <b>${t}</b>); other sources are still searched.<br><br>Want 10× more? Get a free key at <a href="https://openalex.org/settings/api" target="_blank" rel="noopener" style="color:var(--accent)">openalex.org/settings/api</a> and paste it under <b>Topics → OpenAlex API key</b>.</div>`;
@@ -506,7 +543,8 @@
     cursors={};buffers={};exhausted={};failures={};shown.clear();shownKeys.clear();feed.innerHTML='';
     if(mode==='saved'){
       const list=Object.values(state.saved).sort((a,b)=>b.published.localeCompare(a.published));
-      if(!list.length) feed.innerHTML=`<div class="empty">No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.</div>`;
+      feed.appendChild(savedToolbar(list));
+      if(!list.length){ const d=document.createElement('div'); d.className='empty'; d.innerHTML='No saved papers yet.<br>Tap <b>Save</b> on anything worth keeping.'; feed.appendChild(d); }
       list.forEach(p=>feed.appendChild(card(p)));
     } else loadMore();
   }

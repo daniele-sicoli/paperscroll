@@ -11,7 +11,7 @@ A phone-friendly feed for doomscrolling research papers on the topics you care a
 - Keyword variants are matched automatically (thermosphere ≈ thermospheric) and papers are kept only when the keywords appear close together in the title or abstract. Quotes and AND / OR / NOT give you exact control.
 - Follow journals, authors or institutions: `journal:Nature`, `author:Daniele Sicoli`, `institution:MIT`, or filter inside one with `journal:Nature | space weather`.
 - Sort by newest, most cited, or relevance; mix topics or view one at a time.
-- Infinite scroll, skips what you've already seen, and a saved list — all stored locally in your browser. Nothing is sent anywhere except the search queries to OpenAlex.
+- Infinite scroll, skips what you've already seen, and a saved list — all stored locally in your browser. Export saved papers as BibTeX (for Zotero) or as a JSON backup you can import on another device. Nothing is sent anywhere except the search queries to OpenAlex.
 
 ## OpenAlex quota
 
