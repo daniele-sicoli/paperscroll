@@ -665,23 +665,10 @@
   }
   // ---------- play all ----------
   let autoplay=false;
-  // Background playback: a silent looping track makes iOS treat the page as a media player, so the
-  // audio session (and the speech) survives screen lock, and Media Session puts the paper on the lock screen.
-  let bgAudio=null;
-  function silentWav(seconds=3,rate=8000){
-    const n=seconds*rate, buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
-    const str=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};
-    str(0,'RIFF'); v.setUint32(4,36+n*2,true); str(8,'WAVE'); str(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
-    v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); str(36,'data'); v.setUint32(40,n*2,true);
-    return URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));
-  }
-  function bgStart(){
-    try{
-      if(!bgAudio){ bgAudio=new Audio(silentWav()); bgAudio.loop=true; bgAudio.volume=0.01; bgAudio.setAttribute('playsinline',''); }
-      const pr=bgAudio.play(); if(pr&&pr.catch) pr.catch(()=>{});
-    }catch(e){}
-  }
-  function bgStop(){ try{ bgAudio&&bgAudio.pause(); }catch(e){} }
+  // Ask iOS for the 'playback' audio session (Safari 16.4+): the supported way to be treated as a media
+  // player. NOTE: a silent <audio> track must NOT be used here — on iOS it demotes Web Speech to silence.
+  function bgStart(){ try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){} }
+  function bgStop(){ try{ if(navigator.audioSession) navigator.audioSession.type='auto'; }catch(e){} }
   function setMediaSession(p){
     if(!('mediaSession' in navigator)) return;
     try{
