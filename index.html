@@ -482,6 +482,8 @@
     return ecache[k]=e;
   }
 
+  // In quick-search mode results are ranked by relevance regardless of the feed's sort setting.
+  const sortMode=()=>mode==='search'?'relevance':state.sort;
   const SOURCES={
     openalex:{ label:'OpenAlex', quota:true,
       async fetch(topic,cur){
