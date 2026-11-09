@@ -587,6 +587,8 @@
         let query='';
         if(pt.kind==='journal'){ const j=await resolveEntity('journal',pt.name); if(!j.issn) return {items:[],next:null}; filter+=`,issn:${j.issn}`; }
         else if(mode!=='search') filter+=',has-abstract:true';
+        // Crossref only matches author names, so namesakes leak in; OpenAlex already follows the exact profile.
+        if(pt.kind==='author'&&enabledSources().includes('openalex')) return {items:[],next:null};
         if(pt.kind==='author') query+='&query.author='+encodeURIComponent(pt.name);
         if(pt.kind==='institution') query+='&query.affiliation='+encodeURIComponent(pt.name);
         const ckw=pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw;
