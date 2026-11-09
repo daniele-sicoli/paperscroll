@@ -242,6 +242,15 @@
   </div>
 </div>
 
+<div class="sheet" id="pickSheet">
+  <div class="panel land" style="max-height:85dvh">
+    <h2 id="pickTitle">Which one?</h2>
+    <div class="hint" id="pickHint" style="margin:-4px 0 10px"></div>
+    <div id="pickBody"></div>
+    <div class="row" style="margin-top:12px"><button id="pickCancel" style="flex:1">Cancel</button></div>
+  </div>
+</div>
+
 <div class="sheet" id="acctSheet">
   <div class="panel">
     <h2>Account</h2>
@@ -426,22 +435,53 @@
     return {kind,name:m[2].trim(),kw:(m[3]||'').trim()};
   }
   const ecache={};
+  // Remembered choices when a name matches several people/institutions: state.picks["author:piyush mehta"] = {id,name}
+  const pickKey=(kind,name)=>kind+':'+name.toLowerCase().replace(/\s+/g,' ').trim();
+  let pickPending=null;
+  function choosePick(kind,name,cands){
+    if(pickPending&&pickPending.key===pickKey(kind,name)) return pickPending.p;
+    const sheet=$('#pickSheet'), body=$('#pickBody');
+    $('#pickTitle').textContent=kind==='author'?`Which ${name}?`:`Which "${name}"?`;
+    $('#pickHint').textContent=`Several ${kind==='author'?'researchers':'institutions'} match this name. Pick the right one; PaperScroll will remember it.`;
+    body.innerHTML=cands.map((c,i)=>`<button class="it" data-i="${i}" style="display:block;width:100%;text-align:left;background:var(--bg);border-radius:12px;padding:12px;margin-bottom:8px">
+      <div class="t" style="font-weight:700;font-size:15px">${esc(c.name)}${i===0?' <span style="font-size:11px;color:var(--ok)">· best match for your topics</span>':''}</div>
+      <div class="m" style="font-size:12px;color:var(--muted);margin-top:3px">${esc(c.inst||'—')} · ${c.works} works · ${c.cites.toLocaleString()} citations</div>
+      ${c.topics?`<div class="m" style="font-size:12px;color:var(--accent2);margin-top:3px">${esc(c.topics)}</div>`:''}</button>`).join('');
+    const p=new Promise((resolve,reject)=>{
+      body.querySelectorAll('button[data-i]').forEach(btn=>btn.onclick=()=>{ const c=cands[+btn.dataset.i]; state.picks=state.picks||{}; state.picks[pickKey(kind,name)]={id:c.id,name:c.name,issn:c.issn||''}; save(); sheet.classList.remove('open'); pickPending=null; resolve(c); });
+      $('#pickCancel').onclick=()=>{ sheet.classList.remove('open'); pickPending=null; reject(new Error('No '+kind+' selected')); };
+    });
+    pickPending={key:pickKey(kind,name),p};
+    sheet.classList.add('open');
+    return p;
+  }
+  // Rank candidates by overlap between their research topics and the user's own topics.
+  function topicAffinity(c){ const terms=new Set(); for(const t of state.topics){ const pt=parseTopic(t); for(const w of keywords(pt.kw||pt.name||'')) terms.add(stem(w)); } return (String(c.topics||'').toLowerCase().match(/[a-z0-9]+/g)||[]).filter(w=>terms.has(stem(w))).length; }
   async function resolveEntity(kind,name){
     const k=kind+':'+name.toLowerCase();
+    const picked=(state.picks||{})[pickKey(kind,name)]; if(picked) return picked;
     if(ecache[k]) return ecache[k];
-    try{ const c=JSON.parse(localStorage.getItem('oae:'+k)); if(c) return ecache[k]=c; }catch(e){}
     const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey&&!keyRejected?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
-    const sel=kind==='journal'?'id,display_name,issn_l,issn':'id,display_name,works_count';
-    const d=await getJSON(`https://api.openalex.org/${KINDS[kind].ep}?search=${encodeURIComponent(name)}&per-page=1&select=${sel}${extra}`,{quota:true});
-    const r=(d.results||[])[0];
-    if(!r) throw new Error(kind+' not found: '+name);
-    const e={id:r.id.replace('https://openalex.org/',''),name:r.display_name,issn:r.issn_l||(r.issn||[])[0]||''};
-    try{localStorage.setItem('oae:'+k,JSON.stringify(e))}catch(e){}
+    const sel=kind==='journal'?'id,display_name,issn_l,issn,works_count,cited_by_count':kind==='author'?'id,display_name,works_count,cited_by_count,last_known_institutions,topics':kind==='institution'?'id,display_name,works_count,cited_by_count,country_code,geo':'id,display_name,works_count,cited_by_count';
+    const d=await getJSON(`https://api.openalex.org/${KINDS[kind].ep}?search=${encodeURIComponent(name)}&per-page=8&select=${sel}${extra}`,{quota:true});
+    let rs=(d.results||[]);
+    if(!rs.length) throw new Error(kind+' not found: '+name);
+    const toC=r=>({id:r.id.replace('https://openalex.org/',''),name:r.display_name,issn:r.issn_l||(r.issn||[])[0]||'',works:r.works_count||0,cites:r.cited_by_count||0,
+      inst:kind==='author'?((r.last_known_institutions||[])[0]?.display_name||''):kind==='institution'?([r.geo?.city,r.country_code].filter(Boolean).join(', ')):'',
+      topics:kind==='author'?(r.topics||[]).slice(0,3).map(t=>t.display_name).join(' · '):''});
+    let cands=rs.map(toC);
+    if(kind==='author'){
+      // keep people whose name contains every typed name part (initials allowed: "P. Mehta")
+      const parts=name.toLowerCase().split(/\s+/).filter(Boolean);
+      const okName=c=>{ const n=c.name.toLowerCase(); return parts.every(p=>p.length<=2?new RegExp('\\b'+p[0]).test(n):n.includes(p.replace(/\.$/,''))); };
+      const f=cands.filter(okName); if(f.length) cands=f;
+      cands.sort((a,b)=>topicAffinity(b)-topicAffinity(a)||b.cites-a.cites);
+    }
+    const ambiguous=(kind==='author'||kind==='institution')&&cands.length>1&&cands[1].works>=3;
+    const e=ambiguous?await choosePick(kind,name,cands.slice(0,6)):cands[0];
     return ecache[k]=e;
   }
 
-  // In quick-search mode results are ranked by relevance regardless of the feed's sort setting.
-  const sortMode=()=>mode==='search'?'relevance':state.sort;
   const SOURCES={
     openalex:{ label:'OpenAlex', quota:true,
       async fetch(topic,cur){
@@ -1118,7 +1158,9 @@
     renderLimit();
     const l=$('#topicList');l.innerHTML='';
     state.topics.forEach((t,i)=>{
-      const d=document.createElement('div');d.innerHTML=`<span>${esc(t)}</span><b title="Landscape" style="color:var(--accent)">📊</b><b title="Remove">✕</b>`;
+      const tp=parseTopic(t); const pk=tp.kind&&(state.picks||{})[pickKey(tp.kind,tp.name)];
+      const d=document.createElement('div');d.innerHTML=`<span>${esc(t)}${pk?`<br><small style="color:var(--muted)">→ ${esc(pk.name)} · <a href="#" class="repick" style="color:var(--accent)">change</a></small>`:''}</span><b title="Landscape" style="color:var(--accent)">📊</b><b title="Remove">✕</b>`;
+      const rp=d.querySelector('.repick'); if(rp) rp.onclick=(e)=>{ e.preventDefault(); delete state.picks[pickKey(tp.kind,tp.name)]; for(const k of Object.keys(ecache)) if(k===tp.kind+':'+tp.name.toLowerCase()) delete ecache[k]; save(); renderTopicList(); sheet.classList.remove('open'); resolveEntity(tp.kind,tp.name).then(()=>{ renderChips(); resetFeed(); }).catch(()=>{}); };
       d.querySelectorAll('b')[0].onclick=()=>{sheet.classList.remove('open');openLandscape(t);};
       d.querySelectorAll('b')[1].onclick=()=>{state.topics.splice(i,1);if(state.active===t)state.active=null;save();renderTopicList();};
       l.appendChild(d);
@@ -1477,7 +1519,7 @@
       state.topics=topics;
       state.saved=Object.assign({},data.saved||{},state.saved);
       state.seen=Object.assign({},data.seen||{},state.seen);
-      if(data.settings){ for(const k of ['sort','field','mix','sources','myConfs']) if(data.settings[k]) state[k]=data.settings[k]; }
+      if(data.settings){ for(const k of ['sort','field','mix','sources','myConfs','picks']) if(data.settings[k]) state[k]=data.settings[k]; }
     }
     SS('ps_state',state);
     await pushNow();
@@ -1487,7 +1529,7 @@
   async function pushNow(){
     if(!sb||!user) return;
     const seenKeys=Object.keys(state.seen); const seen=seenKeys.length>2000?Object.fromEntries(seenKeys.slice(-2000).map(k=>[k,1])):state.seen;
-    const {error}=await sb.from('user_data').upsert({user_id:user.id,topics:state.topics,saved:state.saved,seen,settings:{sort:state.sort,field:state.field,mix:state.mix,sources:state.sources,myConfs:state.myConfs},updated_at:new Date().toISOString()});
+    const {error}=await sb.from('user_data').upsert({user_id:user.id,topics:state.topics,saved:state.saved,seen,settings:{sort:state.sort,field:state.field,mix:state.mix,sources:state.sources,myConfs:state.myConfs,picks:state.picks},updated_at:new Date().toISOString()});
     if(error) console.warn('sync',error.message);
   }
   async function initCloud(){
