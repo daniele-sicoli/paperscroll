@@ -373,7 +373,7 @@
     // Short words (acronyms like GSI, PCA) must match a whole word or be spelled out in the text
     // (GSI ↔ "gas–surface interaction"); longer ones may match by stem prefix.
     const words=text.split(/[^a-z0-9]+/).filter(Boolean);
-    const spelled=acr=>{ const L=acr.length; for(let i=0;i+L<=words.length;i++){ let ok=true; for(let j=0;j<L;j++){ if(words[i+j][0]!==acr[j]){ ok=false; break; } } if(ok) return true; } return false; };
+    const spelled=acr=>{ const L=acr.length; for(let i=0;i+L<=words.length;i++){ let ok=true; for(let j=0;j<L;j++){ const w=words[i+j]; if(w[0]!==acr[j]||w.length<3||STOP.has(w)){ ok=false; break; } } if(ok) return true; } return false; };
     return keywords(q).filter(k=>!used.has(k.toLowerCase())).every(k=>{ const w=k.toLowerCase(); return w.length<=4?(toks.includes(w)||(/^[a-z]{2,4}$/.test(w)&&spelled(w))):stoks.some(t=>t.startsWith(stem(w))); });
   }
   function relevant(p,topic){
@@ -472,7 +472,8 @@
           const rawW=pt.kw.trim().split(/\s+/); const names=[];
           for(let i=0;i<rawW.length-1;i++) if(/^[A-Z][a-z]{2,}$/.test(rawW[i])&&/^[A-Z][a-z]{2,}$/.test(rawW[i+1])){ names.push(rawW[i]+' '+rawW[i+1]); i++; }
           if(page===1) for(const nm of names){
-            const nf=[...filters,'raw_author_name.search:'+encodeURIComponent('"'+nm+'"')];
+            // Unquoted so middle initials still match ("Piyush M. Mehta"); the client-side check keeps both names on one author.
+            const nf=[...filters,'raw_author_name.search:'+encodeURIComponent(nm)];
             variants.push(run(nf,'','cited_by_count:desc'));
             variants.push(getJSON(`https://api.openalex.org/works?filter=${nf.join(',')}&sort=cited_by_count:desc&per-page=${PER}&page=2&select=${sel}${extra}`,{quota:true}));
             variants.push(run(nf,'','publication_date:desc'));
