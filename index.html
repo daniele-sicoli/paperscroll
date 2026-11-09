@@ -355,9 +355,23 @@
     if(pt.kind){ if(pt.kind==='author'){ const toks=pt.name.toLowerCase().split(/\s+/); const sur=toks[toks.length-1]; if(sur&&!(p.authors||[]).join(' | ').toLowerCase().includes(sur)) return false; }
       if(!pt.kw) return true; q=pt.kw; }
     if(hasOps(q)) return true;
-    const hay=((p.title||'')+' '+(p.summary||'')+' '+(p.authors||[]).join(' ')+' '+(p.cat||'')).toLowerCase();
-    const toks=(hay.match(/[a-z0-9]+/g)||[]).map(stem);
-    return keywords(q).map(stem).every(k=>toks.some(t=>t.startsWith(k))||hay.includes(k));
+    const authors=(p.authors||[]).map(a=>a.toLowerCase());
+    // Name pairs typed in the query ("Piyush Mehta") must belong to the SAME author, not two different people.
+    const raw=q.trim().split(/\s+/);
+    const used=new Set();
+    for(let i=0;i<raw.length-1;i++){
+      const a=raw[i], b=raw[i+1];
+      if(/^[A-Z][a-z]{2,}$/.test(a)&&/^[A-Z][a-z]{2,}$/.test(b)){
+        const fa=a.toLowerCase(), fb=b.toLowerCase();
+        const isName=authors.some(n=>n.includes(fb))||authors.some(n=>n.includes(fa));
+        if(isName){ if(!authors.some(n=>n.includes(fa)&&n.includes(fb))) return false; used.add(fa); used.add(fb); i++; }
+      }
+    }
+    const text=((p.title||'')+' '+(p.summary||'')+' '+authors.join(' ')+' '+(p.cat||'')).toLowerCase();
+    const toks=(text.match(/[a-z0-9]+/g)||[]);
+    const stoks=toks.map(stem);
+    // Short words (acronyms like GSI, PCA) must match a whole word; longer ones may match by stem prefix.
+    return keywords(q).filter(k=>!used.has(k.toLowerCase())).every(k=>{ const w=k.toLowerCase(); return w.length<=4?toks.includes(w):stoks.some(t=>t.startsWith(stem(w))); });
   }
   function relevant(p,topic){
     if(mode==='search') return searchMatches(p,topic);
