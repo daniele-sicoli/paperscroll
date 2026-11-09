@@ -370,8 +370,11 @@
     const text=((p.title||'')+' '+(p.summary||'')+' '+authors.join(' ')+' '+(p.cat||'')).toLowerCase();
     const toks=(text.match(/[a-z0-9]+/g)||[]);
     const stoks=toks.map(stem);
-    // Short words (acronyms like GSI, PCA) must match a whole word; longer ones may match by stem prefix.
-    return keywords(q).filter(k=>!used.has(k.toLowerCase())).every(k=>{ const w=k.toLowerCase(); return w.length<=4?toks.includes(w):stoks.some(t=>t.startsWith(stem(w))); });
+    // Short words (acronyms like GSI, PCA) must match a whole word or be spelled out in the text
+    // (GSI ↔ "gas–surface interaction"); longer ones may match by stem prefix.
+    const words=text.split(/[^a-z0-9]+/).filter(Boolean);
+    const spelled=acr=>{ const L=acr.length; for(let i=0;i+L<=words.length;i++){ let ok=true; for(let j=0;j<L;j++){ if(words[i+j][0]!==acr[j]){ ok=false; break; } } if(ok) return true; } return false; };
+    return keywords(q).filter(k=>!used.has(k.toLowerCase())).every(k=>{ const w=k.toLowerCase(); return w.length<=4?(toks.includes(w)||(/^[a-z]{2,4}$/.test(w)&&spelled(w))):stoks.some(t=>t.startsWith(stem(w))); });
   }
   function relevant(p,topic){
     if(mode==='search') return searchMatches(p,topic);
@@ -464,9 +467,19 @@
           // each word as an author surname with the remaining words as text. Merge, de-duplicate.
           const words=keywords(pt.kw);
           const variants=[run(filters,'&search='+encodeURIComponent(pt.kw))];
+          // Full names typed in the query ("Piyush Mehta"): fetch that author's works broadly (relevance and
+          // citations, 2×100), so older papers are reachable; the client-side matcher then applies the other words.
+          const rawW=pt.kw.trim().split(/\s+/); const names=[];
+          for(let i=0;i<rawW.length-1;i++) if(/^[A-Z][a-z]{2,}$/.test(rawW[i])&&/^[A-Z][a-z]{2,}$/.test(rawW[i+1])){ names.push(rawW[i]+' '+rawW[i+1]); i++; }
+          if(page===1) for(const nm of names){
+            const nf=[...filters,'raw_author_name.search:'+encodeURIComponent('"'+nm+'"')];
+            variants.push(run(nf,'','cited_by_count:desc'));
+            variants.push(getJSON(`https://api.openalex.org/works?filter=${nf.join(',')}&sort=cited_by_count:desc&per-page=${PER}&page=2&select=${sel}${extra}`,{quota:true}));
+            variants.push(run(nf,'','publication_date:desc'));
+          }
           // Each word as an author surname, with NO text constraint: the client-side match then requires the
           // other words by prefix, so "sindy" also finds "SINDYc" and "SINDy-AR", which OpenAlex's exact-token search would miss.
-          if(page===1&&words.length<=4) for(const w of words){
+          if(page===1&&words.length<=4&&!names.length) for(const w of words){
             if(w.length<3) continue;
             variants.push(run([...filters,'raw_author_name.search:'+encodeURIComponent(w)],'','publication_date:desc'));
           }
