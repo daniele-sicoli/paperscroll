@@ -336,7 +336,7 @@
           if(/[?&]api_key=/.test(url)&&!keyRejected){ keyRejected=true; toast('Your OpenAlex API key was rejected — using the shared free quota. Check the key under Topics.'); return getJSON(url.replace(/[?&]api_key=[^&]*/,''),opts); }
           throw new Error('OpenAlex '+res.status+': '+String(msg).slice(0,140));
         }
-        if(!res.ok){ let msg=''; try{ const j=await res.json(); msg=j.message||j.error||''; }catch(e){} throw new Error('OpenAlex '+res.status+(msg?': '+String(msg).slice(0,120):'')); }
+        if(!res.ok){ let msg=''; try{ const j=await res.json(); msg=j.message||j.error||''; if(typeof msg!=='string') msg=(Array.isArray(msg)?msg.map(m=>m.message||JSON.stringify(m)).join('; '):JSON.stringify(msg)); }catch(e){} let api='API'; try{ api=new URL(url).hostname.replace(/^(api|www)\./,''); }catch(e){} throw new Error(api+' '+res.status+(msg?': '+msg.slice(0,160):'')); }
         const data=await res.json(); cachePut(key,data); return data;
       }catch(e){ if(e.quota) throw e; err=e; await sleep(1000*(i+1)); }
     }
@@ -499,7 +499,9 @@
           const fieldKey=state.field==='ti'?'title.search':state.field==='abs'?'abstract.search':'title_and_abstract.search';
           if(state.field==='full') search='&search='+q; else filters.push(fieldKey+':'+q);
         }
-        const sort={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:'relevance_score:desc'}[sortMode()];
+        const hasText=!!search||filters.some(f=>/\.search:/.test(f))||(quick&&!pt.kind&&!!pt.kw);
+        // relevance_score needs a text query; filter-only queries (author:, journal:…) fall back to most cited.
+        const sort={submittedDate:'publication_date:desc',lastUpdatedDate:'cited_by_count:desc',relevance:hasText?'relevance_score:desc':'cited_by_count:desc'}[sortMode()];
         const sel='id,doi,title,display_name,publication_date,authorships,primary_location,best_oa_location,open_access,abstract_inverted_index,cited_by_count,type';
         const extra=(cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'')+(state.oaKey&&!keyRejected?`&api_key=${encodeURIComponent(state.oaKey)}`:'');
         const run=(fl,srch,srt)=>getJSON(`https://api.openalex.org/works?filter=${fl.join(',')}${srch||''}&sort=${srt||sort}&per-page=${PER}&page=${page}&select=${sel}${extra}`,{quota:true});
@@ -590,7 +592,7 @@
         const ckw=pt.kind==='field'?[pt.name,pt.kw].filter(Boolean).join(' '):pt.kw;
         if(ckw) query+='&query.bibliographic='+encodeURIComponent(keywords(ckw).join(' ')||ckw);
         const mailto=cfg.OPENALEX_MAILTO?`&mailto=${encodeURIComponent(cfg.OPENALEX_MAILTO)}`:'';
-        const data=await getJSON(`https://api.crossref.org/works?${query.slice(1)}${query?'&':''}filter=${filter}&sort=${sort}&rows=${PER}&offset=${off}&select=DOI,title,abstract,author,issued,container-title,is-referenced-by-count,URL,link,subtype${mailto}`);
+        const data=await getJSON(`https://api.crossref.org/works?${query.slice(1)}${query?'&':''}filter=${filter}&sort=${sort}&rows=${PER}&offset=${off}&select=DOI,title,abstract,author,issued,container-title,is-referenced-by-count,URL,link,type${mailto}`);
         const results=data.message?.items||[];
         const items=results.map(w=>{
           const dp=(w.issued?.['date-parts']||[[]])[0]||[]; const published=dp.length?`${dp[0]}-${String(dp[1]||1).padStart(2,'0')}-${String(dp[2]||1).padStart(2,'0')}`:'';
@@ -598,7 +600,7 @@
           return { id:'cr:'+w.DOI, doi:w.DOI, url:`https://doi.org/${w.DOI}`, pdf,
             title:stripTags((w.title||[])[0]||'Untitled'), summary:stripTags(w.abstract).replace(/^abstract\s*/i,''),
             authors:(w.author||[]).map(a=>[a.given,a.family].filter(Boolean).join(' ')).filter(Boolean),
-            published, cat:(w['container-title']||[])[0]||(w.subtype==='preprint'?'preprint':''), cites:w['is-referenced-by-count']||0, src:'Crossref' };
+            published, cat:(w['container-title']||[])[0]||(w.type==='posted-content'?'preprint':''), cites:w['is-referenced-by-count']||0, src:'Crossref' };
         });
         return {items, next:(results.length<PER||off+PER>=1000)?null:off+PER};
       }},
